@@ -21,6 +21,36 @@ python run.py --demo                                  # http://localhost:8000
 > `--demo` popula 4 meses de dados realistas para você conhecer o sistema. Sem a flag,
 > o banco começa vazio.
 
+### Requisitos
+
+* **Python 3.10 ou mais novo** (recomendado 3.11+, que é o que o CI testa). Confira com
+  `python --version` — no Windows, se não responder, tente `py -3 --version`.
+* **Git** (ou baixe o ZIP do repositório em *Code → Download ZIP* e descompacte).
+* Nada além disso: não precisa de Node, npm, Docker nem banco de servidor. O SQLite é um
+  arquivo criado automaticamente em `data/financas.db`.
+
+No **Windows**, `make` não vem instalado — use os comandos `python`/`pip` acima (a ativação
+do ambiente virtual é `.venv\Scripts\activate`, e não `source .venv/bin/activate`).
+Os atalhos `make` são opcionais e funcionam em Linux/macOS.
+
+### No dia a dia
+
+```bash
+cd controle-financeiro
+.venv\Scripts\activate        # Linux/macOS: source .venv/bin/activate
+python run.py                  # abre em http://localhost:8000
+```
+
+Para parar, `Ctrl+C`. Seus dados ficam em `data/financas.db` — **copie esse arquivo** para
+fazer backup, e não apague a pasta `data/` (é o seu histórico inteiro).
+
+| Situação | Comando |
+|---|---|
+| Outra porta (a 8000 está ocupada) | `python run.py --port 8080` |
+| Banco em outro lugar | `python run.py --db D:\financas\minhas-contas.db` |
+| Recomeçar do zero | `python run.py --reset` **(apaga tudo)** |
+| Recarregar ao editar o código | `python run.py --reload` |
+
 ---
 
 ## O que ele resolve
