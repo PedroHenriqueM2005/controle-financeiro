@@ -475,6 +475,23 @@
     });
   }
 
+  /* ------------------------------------------------------------ preferências */
+
+  function bindSettings() {
+    const form = $("#form-preferencias");
+    if (!form) return;
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      try {
+        const caixa = form.querySelector('[name="auto_recurring"]');
+        const r = await api("/api/settings", { method: "PUT", body: { auto_recurring: caixa.checked } });
+        reload(r.settings.auto_recurring
+          ? "Geração automática dos fixos ligada."
+          : "Geração automática dos fixos desligada.");
+      } catch (e) { toast(e.message, "err"); }
+    });
+  }
+
   /* ------------------------------------------------------------ ações em linha */
 
   function bindRowActions() {
@@ -519,6 +536,29 @@
         try {
           const r = await api(`/api/cycles/${alvo.dataset.period}/repeat-recurring`, { method: "POST" });
           reload(r.criados ? `${r.criados} gasto(s) fixo(s) copiado(s) como previsto.` : "Nada novo para copiar.");
+        } catch (e) { toast(e.message, "err"); }
+        return;
+      }
+
+      if (acao === "generate-recurring") {
+        try {
+          const r = await api(`/api/recurring/auto/${alvo.dataset.period}`, { method: "POST" });
+          if (r.criados) {
+            reload(`${r.criados} conta(s) fixa(s) lançada(s) como previsto em ${alvo.dataset.period} (${fmtMoney(r.total_em_centavos)}).`);
+          } else if (r.motivo === "fora_do_mes_atual") {
+            toast("Só o mês em curso recebe geração automática.", "err");
+          } else {
+            reload("Nada novo para gerar — os fixos deste mês já estão lançados.");
+          }
+        } catch (e) { toast(e.message, "err"); }
+        return;
+      }
+
+      if (acao === "undo-recurring") {
+        if (!confirm("Desfazer os lançamentos fixos gerados automaticamente neste mês?")) return;
+        try {
+          const r = await api(`/api/recurring/auto/${alvo.dataset.period}`, { method: "DELETE" });
+          reload(r.removidos ? `${r.removidos} lançamento(s) automático(s) removido(s).` : "Nada gerado automaticamente neste mês.");
         } catch (e) { toast(e.message, "err"); }
         return;
       }
@@ -759,6 +799,7 @@
     bindItems();
     bindCategories();
     bindCycle();
+    bindSettings();
     bindRowActions();
     bindImport();
     $$("dialog").forEach((dlg) => dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); }));

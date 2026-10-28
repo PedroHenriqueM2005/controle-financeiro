@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from .. import config
 from ..deps import get_db
 from ..money import format_brl, parse_amount
-from ..services import catalog, charts, compare, exporter, importer, ledger
+from ..services import catalog, charts, compare, exporter, importer, ledger, settings
 from ..utils import current_period, is_valid_period, previous_period
 
 router = APIRouter(prefix="/api", tags=["API"])
@@ -210,6 +210,65 @@ def repeat_recurring(period: str, conn: sqlite3.Connection = Depends(get_db)) ->
     _check_period(period)
     criados = ledger.duplicate_recurring(conn, period)
     return {"period": period, "criados": criados}
+
+
+# ------------------------------------------------------------------ preferências
+
+class SettingsIn(BaseModel):
+    auto_recurring: bool | None = Field(None, description="Gerar os gastos fixos do mês automaticamente")
+
+
+@router.get("/settings")
+def read_settings(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """Preferências do sistema e a descrição de cada uma (para a tela de configuração)."""
+    return {"settings": settings.all(conn), "descricoes": settings.descricoes(),
+            "atual": current_period()}
+
+
+@router.put("/settings")
+def write_settings(payload: SettingsIn, conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    dados = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not dados:
+        raise HTTPException(422, "Nenhuma preferência informada.")
+    try:
+        gravadas = settings.update(conn, dados)
+    except settings.SettingError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "settings": gravadas}
+
+
+# ------------------------------------------------------------------ recorrência automática
+
+@router.post("/recurring/auto/{period}")
+def generate_recurring(period: str, conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """Gera agora os fixos do mês como *previsto* (mesmo com a preferência desligada).
+
+    Só produz efeito no mês em curso; é idempotente.
+    """
+    _check_period(period)
+    r = ledger.auto_generate_recurring(conn, period, force=True)
+    return {
+        "period": period,
+        "criados": r["criados"],
+        "motivo": r["motivo"],
+        "total_em_centavos": sum(int(t["amount_centavos"]) for t in r["lancamentos"]),
+        "lancamentos": r["lancamentos"],
+    }
+
+
+@router.delete("/recurring/auto/{period}")
+def undo_recurring(period: str, conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """Desfaz a geração automática do mês (não toca em lançamentos criados à mão)."""
+    _check_period(period)
+    removidos = ledger.undo_auto_generated(conn, period)
+    return {"ok": True, "period": period, "removidos": removidos}
+
+
+@router.get("/budget/{period}")
+def budget(period: str, conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """Limite × gasto por categoria no mês (informativo — não gera alertas)."""
+    _check_period(period)
+    return ledger.budget_summary(conn, period)
 
 
 # ------------------------------------------------------------------ resumo e comparativos

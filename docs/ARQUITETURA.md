@@ -16,7 +16,7 @@ quanto para quem vai contribuir.
                  ┌───────────────▼─────────────────────────────┐
                  │  app/services                               │
                  │  ledger · catalog · compare · importer      │
-                 │  exporter · charts                          │
+                 │  exporter · charts · settings               │
                  └───────────────┬─────────────────────────────┘
                                  │ SQL
                  ┌───────────────▼─────────────────────────────┐
@@ -123,6 +123,55 @@ O autocomplete combina duas fontes: itens do catálogo (ordenados por frequênci
 descrições de lançamentos antigos que ainda não viraram item (`origem: "historico"`), o que
 torna o sistema útil desde a primeira semana de uso.
 
+## Geração automática dos fixos (sem cron)
+
+O requisito era "todo mês, sozinho". Num app local, que nem sempre está rodando, um
+agendador (cron, APScheduler, tarefa no boot) falha justamente quando o computador ficou
+desligado na virada do mês. A solução adotada é **disparar a geração pelo uso**:
+`routes_pages._gerar_fixos()` roda ao abrir o painel e a lista de lançamentos.
+
+Quatro propriedades sustentam a decisão:
+
+| Propriedade | Como é garantida |
+|---|---|
+| **Idempotente** | `next_recurring()` só devolve o que ainda não existe no mês de destino; abrir o painel dez vezes cria uma cópia só |
+| **Não reescreve história** | `auto_generate_recurring()` retorna `motivo="fora_do_mes_atual"` para qualquer mês que não seja `current_period()` |
+| **Reversível** | os lançamentos nascem com `source="recorrente-auto"`; `undo_auto_generated()` apaga exatamente esse conjunto |
+| **Não sobrescreve o que você digitou** | a identidade da conta é `(normalize(descrição), categoria)` — **sem o valor** |
+
+A identidade sem o valor é o ponto mais delicado. Comparar por `(descrição, valor)` — como
+fazia a primeira versão — duplicava o aluguel no mês em que ele era reajustado: você lançava
+R$ 1.250 e o sistema criava outro "Aluguel" de R$ 1.200 copiado do mês anterior. Comparar só
+por descrição, por outro lado, impediria duas contas homônimas legítimas ("Internet casa" e "Internet escritório" têm descrições distintas, mas "Mensalidade" em *Educação* e em
+*Saúde* são contas diferentes). Descrição + categoria ficou no ponto: pega o reajuste e
+mantém contas realmente distintas separadas. A normalização (`normalize()`) faz "AGUA" de um
+extrato antigo casar com "Água" lançada à mão.
+
+Efeito colateral deliberado: como cada cópia nasce com `recurring = 1`, a corrente se
+sustenta sozinha mês a mês — e **para** assim que você exclui a conta (cancelou a academia,
+ninguém mais copia a academia).
+
+A preferência `auto_recurring` fica na tabela `meta` (`app/services/settings.py`): um
+chave/valor simples, sem migração de esquema, que viaja junto com o arquivo do banco.
+
+## Orçamento informa, não alerta
+
+`categories.budget_centavos` já existia; o que mudou foi o tratamento. A pedido do usuário,
+orçamento é **acompanhamento**, não alarme: `build_alerts()` não emite mais entradas
+`tipo="orcamento"`, e o CSS tirou o vermelho/âmbar dos cartões de limite.
+
+`budget_summary()` nasceu separado de `category_breakdown()` por duas razões:
+
+* `category_breakdown()` agrupa **lançamentos**, então uma categoria orçada sem gasto no mês
+  desaparece da tela — exatamente quando você mais quer vê-la ("não gastei nada de Vestuário,
+  ainda tenho R$ 200"). `budget_summary()` parte das **categorias com limite**;
+* o comparativo mistura realizado com previsto. Aqui a barra usa só o **realizado** (dinheiro
+  que já saiu) e o previsto aparece como texto, para a barra não afirmar um gasto que ainda
+  não aconteceu.
+
+Os campos `estourou`/`quase_estourando` continuam no payload da API — são dados, e algum
+script ou relatório pode querer usá-los. Só a apresentação deixou de gritar.
+
 ## Segurança e escopo
 
 * **uso local, monousuário**: não há autenticação porque o banco é seu e o servidor escuta
@@ -143,12 +192,14 @@ para tornar essa troca localizada.
 
 ## Testes
 
-238 testes em `tests/`, organizados por camada:
+286 testes em `tests/`, organizados por camada:
 
 | Arquivo | O que cobre |
 |---|---|
 | `test_money.py` | parsing/formatação monetária e de datas |
-| `test_ledger.py` | lançamentos, ciclos, resumos, orçamentos, recorrentes, filtros |
+| `test_ledger.py` | lançamentos, ciclos, resumos, recorrentes, filtros |
+| `test_recurring.py` | preferências, geração automática, dedupe por identidade, desfazer |
+| `test_budget.py` | orçamento informativo: totais, faixas, ausência de alertas |
 | `test_catalog.py` | itens, autocomplete, preço médio, alertas, merge |
 | `test_compare.py` | comparativos, matriz, acumulado, destaques |
 | `test_importer.py` | CSV/XLSX, heurísticas, duplicatas, lotes, desfaazer |
@@ -160,4 +211,13 @@ Cada teste usa banco em `tmp_path` (fixture `db_path`), então nada toca os seus
 ## O que ficaria melhor com mais tempo
 
 Ver o **Roadmap** no README. Em resumo: multiusuário, quantidade por item (preço unitário
-real), contas/carteiras, agendamento automático de recorrentes e exportação em PDF.
+real), contas/carteiras, exportação em PDF e regras de recorrência com periodicidade própria.
+
+Duas coisas que a geração automática deixaria mais robustas, se um dia incomodarem:
+
+* uma tabela `recurring_rules` explícita (periodicidade, dia de vencimento, fim da
+  vigência) em vez de derivar as regras do mês anterior — hoje, se você ficar dois meses sem
+  abrir o sistema, a corrente continua porque o mês atual herda do anterior, mas uma regra
+  explícita permitiria preencher os meses pulados de uma vez;
+* geração também de **entradas** recorrentes (aluguel recebido, mesada), hoje restrita a
+  saídas porque o salário tem um caminho próprio (ciclo mensal).

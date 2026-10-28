@@ -81,6 +81,77 @@
   </article>
 </section>
 
+<section class="card">
+  <header>
+    <h2>Lançamentos fixos automáticos</h2>
+    <span class="muted">todo mês, sem digitar de novo</span>
+  </header>
+
+  <form id="form-preferencias" class="form">
+    <label class="check switch-wide">
+      <input type="checkbox" name="auto_recurring" value="1" {% if preferencias.auto_recurring %}checked{% endif %}>
+      <span>
+        <strong>Criar automaticamente os gastos fixos do mês</strong>
+        <small class="muted block">
+          Ao abrir o painel num mês novo, o sistema copia as contas marcadas como “Todo mês (fixo)” do mês
+          anterior e lança como <em>previsto</em> — você só marca como realizado quando pagar.
+          Nada é criado para meses passados, nada sobrescreve o que você digitou, e dá para desfazer a
+          geração de um mês inteiro num clique.
+        </small>
+      </span>
+    </label>
+    <div class="actions wrap-actions">
+      <button class="btn primary" type="submit">Salvar preferência</button>
+      <button class="btn ghost" type="button" data-action="generate-recurring" data-period="{{ mes_atual }}">
+        Gerar fixos de {{ mes_atual }} agora
+      </button>
+      {% if fixos.gerados_auto %}
+        <button class="btn ghost" type="button" data-action="undo-recurring" data-period="{{ mes_atual }}">
+          Desfazer {{ fixos.gerados_auto }} lançamento(s) automático(s)
+        </button>
+      {% endif %}
+      <span class="chip {{ 'ok' if preferencias.auto_recurring else 'static' }}">
+        {{ 'automático ligado' if preferencias.auto_recurring else 'automático desligado' }}
+      </span>
+    </div>
+  </form>
+
+  <h3 class="sub-title">Fixos de {{ mes_atual }}</h3>
+  {% if fixos.lancamentos %}
+    <table class="table tight">
+      <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Situação</th><th class="num">Valor</th><th>Origem</th><th></th></tr></thead>
+      <tbody>
+        {% for tx in fixos.lancamentos %}
+          <tr>
+            <td>{{ tx.data_fmt }}</td>
+            <td>{{ tx.label }}</td>
+            <td><i class="dot" style="background: {{ tx.category_color }}"></i>{{ tx.category_name or '—' }}</td>
+            <td>{{ badge('previsto' if tx.is_previsto else 'realizado', 'warn' if tx.is_previsto else 'ok') }}</td>
+            <td class="num strong">{{ tx.valor_fmt }}</td>
+            <td class="muted small">
+              {%- if tx.source == 'recorrente-auto' %}automático
+              {%- elif tx.source.startswith('recorrente') %}copiado à mão
+              {%- else %}{{ tx.source }}{% endif %}
+            </td>
+            <td class="col-acoes">
+              <button class="btn icon-only" data-action="toggle" data-id="{{ tx.id }}" title="Alternar previsto/realizado">⇄</button>
+              <button class="btn icon-only danger" data-action="delete" data-id="{{ tx.id }}" title="Excluir">🗑</button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint small">
+      Total: <strong>{{ fixos.total_fmt }}</strong> em {{ fixos.qtd }} conta(s) —
+      {{ fixos.realizado_fmt }} já pago e {{ fixos.previsto_fmt }} previsto.
+      {% if fixos.pendentes %}Ainda faltam {{ fixos.pendentes }} fixo(s) do mês anterior neste mês.{% endif %}
+    </p>
+  {% else %}
+    {{ vazio("Nenhum lançamento marcado como fixo neste mês.",
+             "Ao lançar uma despesa, marque a caixa “Todo mês (fixo)”: ela passa a se repetir sozinha nos meses seguintes.") }}
+  {% endif %}
+</section>
+
 <section class="grid-2">
   <article class="card">
     <header><h2>Categorias de saída</h2><span class="muted">limite mensal opcional</span></header>
@@ -93,7 +164,7 @@
             <td class="num">{{ c.budget_fmt or '—' }}</td>
             <td class="num">
               {{ c.total_mes_fmt }}
-              {% if c.estourou %}<span class="badge danger">estourou</span>{% endif %}
+              {% if c.estourou %}<span class="muted small">acima do limite</span>{% endif %}
             </td>
             <td class="num muted">{{ c.usos }}</td>
             <td class="col-acoes">

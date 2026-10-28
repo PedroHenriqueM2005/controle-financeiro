@@ -34,7 +34,8 @@ python run.py --demo                                  # http://localhost:8000
 | "Quero **registrar gastos novos de itens**" | Catálogo de itens com autocomplete: ao digitar, aparecem o preço médio histórico, a última compra e a quantidade de vezes. Itens novos podem ser criados no próprio lançamento (ou automaticamente na importação). |
 | "O preço subiu?" | Alerta automático quando o preço médio do item no mês foge ±10% do histórico, e aviso imediato no formulário ao digitar um valor fora da média. |
 | "Estou gastando rápido demais?" | Painel com % da receita comprometida × % do mês decorrido, média de gasto diário e **quanto você ainda pode gastar por dia** até o fim do mês. |
-| "Teto por categoria" | Orçamento mensal por categoria com barra de progresso e alerta ao se aproximar (80%) ou estourar o limite. |
+| "Teto por categoria" | Limite mensal por categoria com comparativo **informativo**: barra de progresso, quanto já saiu, quanto ainda está previsto e quanto resta. Sem alarme — aparece no painel para você acompanhar. |
+| "Contas que se repetem todo mês" | Marque um lançamento como **“Todo mês (fixo)”** e ele é lançado sozinho como *previsto* no mês seguinte, ao abrir o painel. Nada de cron: a geração acontece quando você usa o sistema, nunca reescreve mês passado e dá para desfazer. |
 
 ---
 
@@ -54,6 +55,7 @@ python run.py --demo                                  # http://localhost:8000
   ajustável, contagem de linhas válidas/duplicadas/inválidas, meses detectados,
   confirmação e **desfazer** importação por lote.
 * **Configurações** (`/configuracoes`) — salário previsto e dia de pagamento de cada mês,
+  **preferência da geração automática dos fixos** (com a lista deles e botões de gerar/desfazer),
   categorias com limite de gasto, cores, arquivamento, estatísticas do banco e backups.
 
 ---
@@ -69,13 +71,17 @@ import_batches 1 ── n   transactions
 * **transaction** — `type` (`entrada`/`saida`), `status` (`previsto`/`realizado`),
   `occurred_on` (data), `period` (`YYYY-MM`, derivado e indexado), `amount_centavos`
   (**inteiro**), `description`, `category_id`, `item_id`, `method`, `recurring`,
-  `source` (`manual`, `import:arquivo`, `demo`, `recorrente:id`) e `import_id`.
+  `source` (`manual`, `import:arquivo`, `demo`, `recorrente:mês`, `recorrente-auto`) e
+  `import_id`. O `source` é o que permite desfazer em bloco uma importação ou uma geração
+  automática sem tocar nos lançamentos feitos à mão.
 * **cycle** — salário previsto do mês, dia de pagamento e observação. Se você não definir
   manualmente, o sistema sincroniza com os lançamentos da categoria "Salário".
 * **category** — nome, tipo, cor e `budget_centavos` (limite mensal opcional).
 * **item** — nome + `normalized_name` único (sem acento e em minúsculas), categoria,
   unidade e observação. É o que permite casar "Café 500g", "cafe 500g" e "CAFÉ 500G".
 * **import_batch** — cada importação vira um lote rastreável e reversível.
+* **meta** — chave/valor com as preferências do sistema (hoje, `auto_recurring`) e o
+  `schema_version` das migrações.
 
 **Dinheiro nunca é `float`:** tudo é armazenado e somado em **centavos (inteiro)** e
 convertido em `Decimal` apenas para exibir. Somatórios de extrato não acumulam erro de
@@ -101,7 +107,8 @@ controle-financeiro/
 │   ├── utils.py               # datas, períodos, normalização de texto
 │   ├── seed.py                # base de demonstração
 │   ├── services/
-│   │   ├── ledger.py          # lançamentos, categorias, ciclos, resumos, alertas
+│   │   ├── ledger.py          # lançamentos, categorias, ciclos, resumos, orçamento, fixos
+│   │   ├── settings.py        # preferências (chave/valor na tabela meta)
 │   │   ├── catalog.py         # itens, autocomplete, preço médio, alertas de preço
 │   │   ├── compare.py         # mês × mês, matriz categorias × meses, acumulado
 │   │   ├── importer.py        # CSV/XLSX: detecção de colunas, heurísticas, lotes
@@ -118,7 +125,7 @@ controle-financeiro/
 │   └── ARQUITETURA.md         # decisões técnicas e porquês
 ├── exemplos/
 │   └── planilha-gastos-2025.csv   # planilha de exemplo para testar a importação
-└── tests/                     # 238 testes (unidades + API + import/export)
+└── tests/                     # 286 testes (unidades + API + import/export)
 ```
 
 ---
@@ -154,6 +161,45 @@ Teste agora com [`exemplos/planilha-gastos-2025.csv`](exemplos/planilha-gastos-2
 
 ---
 
+## Contas fixas automáticas
+
+Marque a caixa **“Todo mês (fixo)”** ao lançar aluguel, internet, streaming, academia…
+No mês seguinte, ao abrir o painel, essas contas já estão lançadas como **previsto**:
+
+1. a geração olha só para o **mês em curso** — meses fechados nunca são alterados e nada é
+   criado para o futuro;
+2. ela compara pela **identidade da conta** (descrição normalizada + categoria), não pelo
+   valor: se o aluguel subiu de R$ 1.200 para R$ 1.250 e você já lançou o novo, não aparece
+   um segundo aluguel;
+3. cada geração é **idempotente** (abrir o painel dez vezes não cria dez cópias) e marcada
+   com `source = recorrente-auto`, então o botão **Desfazer** remove exatamente o que foi
+   criado automaticamente, sem tocar no que você digitou;
+4. se você cancelar uma conta, é só excluí-la: a corrente para de copiá-la nos meses
+   seguintes.
+
+Liga/desliga em **Configurações → Lançamentos fixos automáticos** (preferência
+`auto_recurring`, gravada no próprio banco). O botão **“Gerar fixos de {mês} agora”** força
+a geração mesmo com a preferência desligada.
+
+> Entradas recorrentes não são copiadas de propósito: o salário vive no campo
+> *salário previsto* do ciclo mensal, que é o lugar certo para ajustá-lo.
+
+## Orçamento por categoria (informativo)
+
+Em **Configurações → Categorias de saída** você informa o limite mensal de cada categoria.
+O painel mostra, sem alarmes:
+
+* total **orçado × gasto** do mês e quanto ainda está disponível;
+* por categoria: o que já saiu (**realizado**), o que ainda vai sair (**previsto**),
+  percentual do limite e saldo restante — uma categoria orçada mas sem gasto aparece com
+  R$ 0,00 em vez de sumir;
+* ordenação pelo percentual mais comprometido primeiro.
+
+A barra usa apenas o que já foi **realizado** (dinheiro que efetivamente saiu); o previsto
+aparece como texto ao lado, para não parecer que você já gastou o que ainda vai gastar.
+
+---
+
 ## API
 
 Documentação interativa (Swagger) em **`/api/docs`** e ReDoc em `/api/redoc`.
@@ -173,6 +219,10 @@ GET    /api/items/{id}/price-check?amount=   variação frente ao preço médio
 GET    /api/categories · POST · PATCH · DELETE
 PUT    /api/cycles/{period}         salário previsto do mês
 POST   /api/cycles/{period}/repeat-recurring   copia gastos fixos do mês anterior
+GET    /api/settings · PUT /api/settings   preferências (geração automática)
+POST   /api/recurring/auto/{period}    gera agora os fixos do mês
+DELETE /api/recurring/auto/{period}    desfaz a geração automática do mês
+GET    /api/budget/{period}            limite × gasto por categoria
 POST   /api/import/upload           prévia da planilha
 POST   /api/import/commit           confirma a importação
 DELETE /api/imports/{id}            desfaz um lote
@@ -198,7 +248,7 @@ curl http://localhost:8000/api/summary/2026-11
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 238 testes
+pytest                     # 286 testes
 pytest -k importer         # só o importador
 pytest --cov=app           # se você instalar pytest-cov
 ```
@@ -246,6 +296,11 @@ Variáveis de ambiente:
 * **`check_same_thread=False` + conexão por request** — compatível com endpoints `async`
   (upload) e sync (threadpool) do FastAPI.
 * **Migrações incrementais** (`app/db.py::_migrate`) — adicionar coluna não perde dados.
+* **Geração de fixos disparada pelo uso, não por cron** — o app é local e nem sempre está
+  no ar; gerar ao abrir o painel garante que o mês novo já amanhece lançado, sem serviço
+  em segundo plano (detalhes em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)).
+* **Orçamento informa, não alerta** — decisão de produto: o comparativo limite × gasto fica
+  sempre visível no painel, mas não entra na lista de alertas.
 
 Mais detalhes em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
@@ -257,8 +312,10 @@ Mais detalhes em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 - [ ] Quantidade por item (kg, un) para preço unitário real
 - [ ] Contas/carteiras separadas (dinheiro, banco, cartão) com transferência entre elas
 - [ ] Metas de economia e projeção de reserva de emergência
-- [ ] Agendamento automático de recorrentes (hoje é um botão que sugere e copia)
+- [x] Agendamento automático de recorrentes — feito: gera *previstos* ao abrir o mês, com preferência e desfazer
 - [ ] Exportar PDF do resumo mensal
+- [ ] Alertas opcionais de orçamento (hoje o comparativo é apenas informativo)
+- [ ] Regras de recorrência com periodicidade própria (semanal, trimestral, anual)
 - [ ] Reconhecimento de extrato OFX/QIF
 - [ ] Empacotar como executável (PyInstaller) e como container Docker
 

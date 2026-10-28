@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from .. import config
 from ..deps import get_db
 from ..money import format_brl
-from ..services import catalog, charts, compare, importer, ledger
+from ..services import catalog, charts, compare, importer, ledger, settings
 from ..utils import current_period, is_valid_period, period_label, previous_period, shift_period
 
 router = APIRouter(tags=["Páginas"])
@@ -50,6 +50,22 @@ def _periodo_ou_atual(period: str | None) -> str:
     return period if (period and is_valid_period(period)) else current_period()
 
 
+def _gerar_fixos(conn: sqlite3.Connection, periodo: str) -> dict[str, Any]:
+    """Dispara a geração automática dos fixos e devolve o estado para a tela.
+
+    Roda na abertura da página: é assim que "todo mês" acontece sem cron —
+    quem abre o sistema no mês novo já encontra os fixos lançados como
+    previsto. Idempotente, e só toca no mês em curso.
+    """
+    geracao = ledger.auto_generate_recurring(conn, periodo)
+    return {
+        "auto_recurring": settings.is_auto_recurring(conn),
+        "gerados_auto": geracao["criados"],
+        "gerados_motivo": geracao["motivo"],
+        "auto_gerados": ledger.count_auto_generated(conn, periodo),
+    }
+
+
 # ------------------------------------------------------------------ painel
 
 @router.get("/", response_class=HTMLResponse)
@@ -59,6 +75,7 @@ def painel(
     conn: sqlite3.Connection = Depends(get_db),
 ) -> HTMLResponse:
     periodo = _periodo_ou_atual(period)
+    recorrentes = _gerar_fixos(conn, periodo)          # antes do resumo: os novos previstos já contam
     resumo = ledger.month_summary(conn, periodo)
     serie = [{**p, "label": p["period"][5:7] + "/" + p["period"][2:4]} for p in resumo["serie"]]
 
@@ -78,6 +95,8 @@ def painel(
         ),
         "alertas_preco": catalog.price_alerts(conn, periodo),
         "recorrentes_pendentes": ledger.next_recurring(conn, periodo),
+        "fixos": ledger.recurring_summary(conn, periodo),
+        **recorrentes,
     }
     return render(request, "dashboard.html", **contexto)
 
@@ -104,6 +123,7 @@ def lancamentos(
     itens = ledger.list_transactions(conn, limit=page_size, offset=(page - 1) * page_size, **filtros)
 
     totais = ledger.totals(conn, periodo) if periodo else None
+    recorrentes = _gerar_fixos(conn, current_period())
     contexto = {
         "period": periodo or current_period(),
         "periodos": ledger.available_periods(conn),
@@ -117,6 +137,8 @@ def lancamentos(
         "categorias_entrada": ledger.list_categories(conn, kind="entrada"),
         "methods": ledger.methods_in_use(conn),
         "totais": totais,
+        "fixos": ledger.recurring_summary(conn, periodo or current_period()),
+        **recorrentes,
     }
     return render(request, "lancamentos.html", **contexto)
 
@@ -242,6 +264,11 @@ def configuracoes(request: Request, period: str | None = None, conn: sqlite3.Con
         "methods": ledger.methods_in_use(conn),
         "anterior": previous_period(periodo),
         "proximo": shift_period(periodo, 1),
+        "orcamento": ledger.budget_summary(conn, periodo),
+        "preferencias": settings.all(conn),
+        "descricoes": settings.descricoes(),
+        "fixos": ledger.recurring_summary(conn, current_period()),
+        "mes_atual": current_period(),
     }
     return render(request, "configuracoes.html", **contexto)
 

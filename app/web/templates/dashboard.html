@@ -161,13 +161,39 @@
 </section>
 {% endif %}
 
-{% if recorrentes_pendentes %}
+{% if gerados_auto %}
+<section class="card banner auto">
+  <div>
+    <strong>{{ gerados_auto }} conta(s) fixa(s) lançada(s) automaticamente como “previsto” em {{ r.label }}.</strong>
+    <span class="muted">
+      Marque como realizado conforme for pagando — ou desfaça a geração.
+      <a class="link" href="/configuracoes">desativar em Configurações</a>
+    </span>
+  </div>
+  <button class="btn ghost sm" data-action="undo-recurring" data-period="{{ period }}">Desfazer</button>
+</section>
+{% endif %}
+
+{% if (fixos.qtd or 0) or recorrentes_pendentes %}
 <section class="card banner">
   <div>
-    <strong>{{ recorrentes_pendentes|length }} gasto(s) fixo(s) do mês anterior ainda não estão em {{ r.label }}.</strong>
-    <span class="muted">Copiar todos como “previsto” economiza digitação.</span>
+    <strong>Fixos de {{ r.label }}: {{ fixos.total_fmt }} em {{ fixos.qtd }} conta(s)</strong>
+    <span class="muted">
+      {{ fixos.realizado_fmt }} pago · {{ fixos.previsto_fmt }} ainda previsto
+      {% if auto_gerados %} · {{ auto_gerados }} gerado(s) automaticamente{% endif %}
+      {% if not auto_recurring %} · geração automática desligada{% endif %}
+    </span>
   </div>
-  <button class="btn sm" data-action="repeat-recurring" data-period="{{ period }}">Repetir gastos fixos</button>
+  <div class="toolbar">
+    {% if auto_gerados and not gerados_auto %}
+      <button class="btn ghost sm" data-action="undo-recurring" data-period="{{ period }}">Desfazer automáticos</button>
+    {% endif %}
+    {% if recorrentes_pendentes %}
+      <button class="btn sm" data-action="repeat-recurring" data-period="{{ period }}">
+        Copiar {{ recorrentes_pendentes|length }} fixo(s) de {{ r.anterior_label }}
+      </button>
+    {% endif %}
+  </div>
 </section>
 {% endif %}
 
@@ -185,22 +211,33 @@
 <section class="grid-2">
   <article class="card">
     <header><h2>Orçamentos do mês</h2><a class="btn ghost sm" href="/configuracoes?period={{ period }}">editar limites</a></header>
-    {% set com_orcamento = r.categorias|selectattr('budget')|list %}
-    {% if com_orcamento %}
+    {% set orc = r.orcamento %}
+    {% if orc.tem_dados %}
+      <div class="budget-total">
+        <span><strong>{{ orc.gasto_fmt }}</strong> de {{ orc.orcado_fmt }} orçados</span>
+        <span class="muted">{{ orc.pct_fmt }} · {% if orc.acima %}{{ orc.disponivel_fmt }} acima{% else %}{{ orc.disponivel_fmt }} disponíveis{% endif %}</span>
+      </div>
+      {{ barra(orc.pct, '#6366f1', 10) }}
       <ul class="budget-list">
-        {% for c in com_orcamento %}
-          <li class="{{ 'over' if c.estourou else ('near' if c.quase_estourando else '') }}">
+        {% for c in orc.categorias %}
+          <li class="{{ 'over' if c.acima else ('near' if c.perto else '') }}">
             <div class="budget-head">
               <span><i class="dot" style="background: {{ c.color }}"></i>{{ c.name }}</span>
-              <span>{{ c.total_fmt }} / {{ c.budget_fmt }}</span>
+              <span>{{ c.gasto_fmt }} / {{ c.budget_fmt }}</span>
             </div>
-            {{ barra(c.budget_pct, '#ef4444' if c.estourou else c.color, 8) }}
-            <small class="muted">{{ c.budget_pct_fmt }} do limite · {{ c.qtd }} lançamento(s)</small>
+            {{ barra(c.pct, c.color, 8) }}
+            <small class="muted">
+              {{ c.pct_fmt }} do limite
+              {%- if c.qtd %} · {{ c.qtd }} lançamento(s){% endif %}
+              {%- if c.previsto %} · + {{ c.previsto_fmt }} previsto{% endif %}
+              {%- if c.acima %} · {{ c.disponivel_fmt }} acima do previsto
+              {%- else %} · {{ c.disponivel_fmt }} disponíveis{% endif %}
+            </small>
           </li>
         {% endfor %}
       </ul>
     {% else %}
-      {{ vazio("Nenhum limite definido ainda.", "Em Configurações → Categorias você define quanto pretende gastar por categoria e o painel passa a alertar.") }}
+      {{ vazio("Nenhum limite definido ainda.", "Em Configurações → Categorias de saída você informa quanto pretende gastar por categoria. O painel mostra aqui o comparativo, sem alertas — só para você acompanhar.") }}
     {% endif %}
   </article>
 

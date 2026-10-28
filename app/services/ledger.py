@@ -32,10 +32,14 @@ from ..utils import (
     today,
     truncate,
 )
-from . import catalog
+from . import catalog, settings
 
 VALID_TYPES = ("entrada", "saida")
 VALID_STATUS = ("previsto", "realizado")
+
+# marca os lançamentos criados pela geração automática dos fixos do mês,
+# para que possam ser desfeitos em bloco sem tocar nos demais
+SOURCE_AUTO_RECORRENTE = "recorrente-auto"
 
 TX_SELECT = """
 SELECT t.*,
@@ -451,6 +455,43 @@ def list_transactions(
     return [decorate_transaction(dict(r)) for r in conn.execute(sql, tuple(params)).fetchall()]
 
 
+def list_recurring(conn: sqlite3.Connection, period: str) -> list[dict[str, Any]]:
+    """Lançamentos marcados como fixos (``recurring``) no mês, maiores primeiro.
+
+    Usada pelo cartão "Gastos fixos" do painel e pela tela de configurações.
+    """
+    rows = conn.execute(
+        TX_SELECT + " WHERE t.period = ? AND t.recurring = 1 "
+        "ORDER BY t.type, t.amount_centavos DESC",
+        (period,),
+    ).fetchall()
+    return [decorate_transaction(dict(r)) for r in rows]
+
+
+def recurring_summary(conn: sqlite3.Connection, period: str) -> dict[str, Any]:
+    """Totais dos fixos do mês, separando o que já foi pago do que está previsto."""
+    fixos = list_recurring(conn, period)
+    saidas = [f for f in fixos if f["type"] == "saida"]
+    realizadas = [f for f in saidas if f["status"] == "realizado"]
+    previstas = [f for f in saidas if f["status"] == "previsto"]
+    auto = count_auto_generated(conn, period)
+    return {
+        "period": period,
+        "lancamentos": fixos,
+        "qtd": len(saidas),
+        "qtd_realizadas": len(realizadas),
+        "qtd_previstas": len(previstas),
+        "total": sum(int(f["amount_centavos"]) for f in saidas),
+        "total_fmt": format_brl(sum(int(f["amount_centavos"]) for f in saidas)),
+        "realizado": sum(int(f["amount_centavos"]) for f in realizadas),
+        "realizado_fmt": format_brl(sum(int(f["amount_centavos"]) for f in realizadas)),
+        "previsto": sum(int(f["amount_centavos"]) for f in previstas),
+        "previsto_fmt": format_brl(sum(int(f["amount_centavos"]) for f in previstas)),
+        "gerados_auto": auto,
+        "pendentes": len(next_recurring(conn, period)),
+    }
+
+
 def count_transactions(conn: sqlite3.Connection, **filters: Any) -> int:
     where, params = _build_filters(
         filters.get("period"), filters.get("tx_type"), filters.get("status"),
@@ -596,6 +637,86 @@ def category_breakdown(conn: sqlite3.Connection, period: str, tx_type: str = "sa
     return resultado
 
 
+def budget_summary(conn: sqlite3.Connection, period: str, tx_type: str = "saida") -> dict[str, Any]:
+    """Orçamento × gasto por categoria — visão **informativa** (sem alertas).
+
+    Duas diferenças importantes em relação a :func:`category_breakdown`:
+
+    * parte das **categorias que têm limite definido**, e não dos lançamentos —
+      assim uma categoria orçada mas ainda sem gasto no mês aparece com R$ 0,00
+      em vez de sumir da tela;
+    * separa o que já foi **realizado** do que está **previsto**. A barra de
+      progresso usa só o realizado (é o dinheiro que efetivamente saiu), e o
+      previsto aparece como informação adicional.
+    """
+    movimentado: dict[int, dict[str, int]] = {}
+    for r in conn.execute(
+        "SELECT category_id, status, SUM(amount_centavos) AS total, COUNT(*) AS qtd "
+        "FROM transactions WHERE period = ? AND type = ? AND category_id IS NOT NULL "
+        "GROUP BY category_id, status",
+        (period, tx_type),
+    ):
+        alvo = movimentado.setdefault(int(r["category_id"]), {"realizado": 0, "previsto": 0, "qtd": 0})
+        alvo["realizado" if r["status"] == "realizado" else "previsto"] += int(r["total"] or 0)
+        alvo["qtd"] += int(r["qtd"] or 0)
+
+    categorias: list[dict[str, Any]] = []
+    for r in conn.execute(
+        "SELECT id, name, color, budget_centavos AS budget FROM categories "
+        "WHERE budget_centavos IS NOT NULL AND archived = 0 AND kind = ? ORDER BY name",
+        (tx_type,),
+    ):
+        budget = int(r["budget"] or 0)
+        mov = movimentado.get(int(r["id"]), {"realizado": 0, "previsto": 0, "qtd": 0})
+        gasto = mov["realizado"]
+        previsto = mov["previsto"]
+        disponivel = budget - gasto
+        pct = percent(gasto, budget)
+        categorias.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "color": r["color"],
+                "budget": budget,
+                "budget_fmt": format_brl(budget),
+                "gasto": gasto,
+                "gasto_fmt": format_brl(gasto),
+                "previsto": previsto,
+                "previsto_fmt": format_brl(previsto),
+                "qtd": mov["qtd"],
+                "disponivel": disponivel,
+                "disponivel_fmt": format_brl(abs(disponivel)),
+                "pct": pct,
+                "pct_fmt": format_percent(pct, sinal=False),
+                "acima": gasto > budget,
+                "perto": bool(budget) and budget * 0.8 <= gasto <= budget,
+            }
+        )
+    # mais comprometido primeiro; sem limite definido não existe aqui
+    categorias.sort(key=lambda c: (-(c["pct"] or 0), c["name"]))
+
+    orcado = sum(c["budget"] for c in categorias)
+    gasto = sum(c["gasto"] for c in categorias)
+    previsto = sum(c["previsto"] for c in categorias)
+    return {
+        "period": period,
+        "categorias": categorias,
+        "qtd": len(categorias),
+        "orcado": orcado,
+        "orcado_fmt": format_brl(orcado),
+        "gasto": gasto,
+        "gasto_fmt": format_brl(gasto),
+        "previsto": previsto,
+        "previsto_fmt": format_brl(previsto),
+        "disponivel": orcado - gasto,
+        "disponivel_fmt": format_brl(abs(orcado - gasto)),
+        "pct": percent(gasto, orcado),
+        "pct_fmt": format_percent(percent(gasto, orcado), sinal=False),
+        "acima": gasto > orcado,
+        "tem_dados": bool(categorias),
+    }
+
+
 def method_breakdown(conn: sqlite3.Connection, period: str, tx_type: str = "saida") -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -728,31 +849,13 @@ def available_periods(conn: sqlite3.Connection) -> list[str]:
 
 
 def build_alerts(conn: sqlite3.Connection, period: str, resumo: dict[str, Any]) -> list[dict[str, Any]]:
-    """Alertas acionáveis do mês (orçamento estourado, preço em alta, saldo…)."""
-    alertas: list[dict[str, Any]] = []
+    """Alertas acionáveis do mês (preço em alta, saldo projetado, a receber…).
 
-    for cat in resumo["categorias"]:
-        if cat["estourou"]:
-            alertas.append(
-                {
-                    "nivel": "perigo",
-                    "tipo": "orcamento",
-                    "titulo": f"Orçamento estourado em {cat['name']}",
-                    "texto": (
-                        f"Você gastou {cat['total_fmt']} de um limite de {cat['budget_fmt']} "
-                        f"({cat['budget_pct_fmt']})."
-                    ),
-                }
-            )
-        elif cat["quase_estourando"]:
-            alertas.append(
-                {
-                    "nivel": "atencao",
-                    "tipo": "orcamento",
-                    "titulo": f"{cat['name']} perto do limite",
-                    "texto": f"Já foram {cat['total_fmt']} de {cat['budget_fmt']} ({cat['budget_pct_fmt']}).",
-                }
-            )
+    Orçamento **não** entra aqui de propósito: o usuário pediu acompanhamento
+    informativo, sem ser alertado. O comparativo limite × gasto vive no cartão
+    "Orçamentos do mês" (``budget_summary``), sempre visível, sem alarme.
+    """
+    alertas: list[dict[str, Any]] = []
 
     for alerta in catalog.price_alerts(conn, period)[:3]:
         sentido = "subiu" if alerta["subiu"] else "caiu"
@@ -859,6 +962,7 @@ def month_summary(conn: sqlite3.Connection, period: str | None = None, ref: date
         "sugestao_gasto_diario_fmt": format_brl(sugestao_diaria),
         "categorias": categorias,
         "categorias_fmt": categorias,
+        "orcamento": budget_summary(conn, periodo),
         "metodos": method_breakdown(conn, periodo, "saida"),
         "top_itens": top_items(conn, periodo),
         "fixos_variaveis": fixed_vs_variable(conn, periodo),
@@ -914,16 +1018,32 @@ def daily_breakdown(conn: sqlite3.Connection, period: str) -> list[dict[str, Any
     ]
 
 
+def _identidade_conta(descricao: Any, categoria_id: Any) -> tuple[str, int | None]:
+    """Identidade de uma conta, usada para saber se ela já está no mês.
+
+    Descrição normalizada + categoria — **sem o valor**: se o aluguel subiu de
+    R$ 1.200 para R$ 1.250 e você já lançou o novo, a cópia automática não pode
+    criar um segundo "Aluguel" só porque o número é diferente.
+    """
+    return (normalize(descricao or ""), int(categoria_id) if categoria_id else None)
+
+
 def next_recurring(conn: sqlite3.Connection, period: str) -> list[dict[str, Any]]:
     """Lançamentos recorrentes do mês anterior que ainda não existem no mês atual.
 
-    Base para o botão "repetir gastos fixos": o sistema sugere, o usuário confirma.
+    Base tanto do botão "repetir gastos fixos" quanto da geração automática.
+
+    A regra de ouro é **nunca duplicar**: se o mês de destino já tem um
+    lançamento com a mesma identidade (descrição normalizada + categoria),
+    o fixo é considerado lançado — mesmo que o valor tenha mudado (o aluguel
+    subiu, a mensalidade foi reajustada) e mesmo que você o tenha digitado à
+    mão em vez de marcá-lo como fixo.
     """
     anterior = previous_period(period)
     existentes = {
-        (r["description"], int(r["amount_centavos"]))
+        _identidade_conta(r["description"], r["category_id"])
         for r in conn.execute(
-            "SELECT description, amount_centavos FROM transactions WHERE period = ?", (period,)
+            "SELECT description, category_id FROM transactions WHERE period = ?", (period,)
         )
     }
     sugestoes = []
@@ -932,7 +1052,7 @@ def next_recurring(conn: sqlite3.Connection, period: str) -> list[dict[str, Any]
         "ORDER BY t.amount_centavos DESC",
         (anterior,),
     ):
-        chave = (r["description"], int(r["amount_centavos"]))
+        chave = _identidade_conta(r["description"], r["category_id"])
         if chave in existentes:
             continue
         existentes.add(chave)
@@ -941,28 +1061,96 @@ def next_recurring(conn: sqlite3.Connection, period: str) -> list[dict[str, Any]
 
 
 def duplicate_recurring(conn: sqlite3.Connection, period: str) -> int:
-    """Copia os gastos fixos do mês anterior como *previstos* no mês informado."""
-    criados = 0
+    """Copia os gastos fixos do mês anterior como *previstos* no mês informado.
+
+    É a versão **manual** (botão "Repetir gastos fixos"): funciona para qualquer
+    mês, inclusive passados e futuros.
+    """
+    return len(_copy_recurring(conn, period, source=f"recorrente:{period}"))
+
+
+def _copy_recurring(conn: sqlite3.Connection, period: str, source: str) -> list[dict[str, Any]]:
+    """Cria, no mês ``period``, um previsto para cada fixo do mês anterior.
+
+    Idempotente: ``next_recurring`` já descarta o que existe no mês de destino.
+    Retorna os lançamentos criados (decorados).
+    """
+    origem = period_label(previous_period(period))
+    criados = []
     for tx in next_recurring(conn, period):
         dia = min(int(tx["occurred_on"][8:10]), days_in_month(period))
-        create_transaction(
-            conn,
-            {
-                "type": tx["type"],
-                "status": "previsto",
-                "occurred_on": f"{period}-{dia:02d}",
-                "amount_centavos": tx["amount_centavos"],
-                "description": tx["description"],
-                "category_id": tx["category_id"],
-                "item_id": tx["item_id"],
-                "method": tx["method"],
-                "recurring": 1,
-                "source": f"recorrente:{tx['id']}",
-                "note": f"Copiado de {period_label(previous_period(period))}",
-            },
+        criados.append(
+            create_transaction(
+                conn,
+                {
+                    "type": tx["type"],
+                    "status": "previsto",
+                    "occurred_on": f"{period}-{dia:02d}",
+                    "amount_centavos": tx["amount_centavos"],
+                    "description": tx["description"],
+                    "category_id": tx["category_id"],
+                    "item_id": tx["item_id"],
+                    "method": tx["method"],
+                    "recurring": 1,
+                    "source": source,
+                    "note": f"Copiado de {origem}",
+                },
+            )
         )
-        criados += 1
+    conn.commit()
     return criados
+
+
+def auto_generate_recurring(
+    conn: sqlite3.Connection, period: str | None = None, force: bool = False
+) -> dict[str, Any]:
+    """Gera sozinha os gastos fixos do mês em curso, como *previsto*.
+
+    Chamada ao abrir o painel/a lista de lançamentos. Diferenças em relação ao
+    botão manual (``duplicate_recurring``):
+
+    * só atua no **mês atual** — nunca reescreve meses fechados nem cria
+      previsões para meses que ainda não começaram;
+    * respeita a preferência ``auto_recurring`` (Configurações), a menos que
+      ``force=True``;
+    * marca os lançamentos com ``source='recorrente-auto'``, o que permite
+      desfazer a geração em bloco (``undo_auto_generated``).
+
+    É idempotente: chamar duas vezes no mesmo mês não duplica nada.
+    """
+    periodo = period or current_period()
+    resultado: dict[str, Any] = {"period": periodo, "criados": 0, "lancamentos": [], "motivo": None}
+
+    if periodo != current_period():
+        resultado["motivo"] = "fora_do_mes_atual"
+        return resultado
+    if not force and not settings.is_auto_recurring(conn):
+        resultado["motivo"] = "desativado"
+        return resultado
+
+    criados = _copy_recurring(conn, periodo, source=SOURCE_AUTO_RECORRENTE)
+    resultado["criados"] = len(criados)
+    resultado["lancamentos"] = criados
+    resultado["motivo"] = None if criados else "nada_novo"
+    return resultado
+
+
+def count_auto_generated(conn: sqlite3.Connection, period: str) -> int:
+    """Quantos fixos do mês foram criados pela geração automática."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE period = ? AND source = ?",
+        (period, SOURCE_AUTO_RECORRENTE),
+    ).fetchone()[0]
+
+
+def undo_auto_generated(conn: sqlite3.Connection, period: str) -> int:
+    """Desfaz a geração automática do mês (remove só o que ela criou)."""
+    cur = conn.execute(
+        "DELETE FROM transactions WHERE period = ? AND source = ?",
+        (period, SOURCE_AUTO_RECORRENTE),
+    )
+    conn.commit()
+    return cur.rowcount
 
 
 def stats_gerais(conn: sqlite3.Connection) -> dict[str, Any]:

@@ -186,7 +186,8 @@ class TestResumoMensal:
         assert "saldo" in tipos
         assert r["saldo_projetado"] < 0
 
-    def test_alerta_de_orcamento_estourado(self, conn):
+    def test_orcamento_e_informativo_e_nao_vira_alerta(self, conn):
+        """Decisão de produto: orçamento é acompanhamento, não alerta."""
         from datetime import date
 
         cat_id = ledger.ensure_category(conn, "Mercado / Alimentação", "saida")
@@ -194,8 +195,16 @@ class TestResumoMensal:
         ledger.create_transaction(conn, {"type": "saida", "amount": "150", "occurred_on": "2026-10-02",
                                          "description": "feira", "category_id": cat_id})
         r = ledger.month_summary(conn, "2026-10", ref=date(2026, 10, 15))
-        assert any(a["tipo"] == "orcamento" and a["nivel"] == "perigo" for a in r["alertas"])
-        assert r["categorias"][0]["estourou"] is True
+
+        # não aparece mais entre os alertas…
+        assert not any(a["tipo"] == "orcamento" for a in r["alertas"])
+        # …mas continua visível como informação no resumo do mês
+        orc = r["orcamento"]
+        mercado = orc["categorias"][0]
+        assert mercado["budget_fmt"] == "R$ 100,00"
+        assert mercado["gasto_fmt"] == "R$ 150,00"
+        assert mercado["acima"] is True
+        assert orc["disponivel_fmt"] == "R$ 50,00"
 
 
 class TestCiclos:

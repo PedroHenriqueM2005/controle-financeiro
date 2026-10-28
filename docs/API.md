@@ -147,6 +147,80 @@ ou `status` fora do domínio.
 Com `lock: true` o valor fica travado (não é mais sincronizado com os lançamentos de
 "Salário"). Com `lock: false` ele passa a espelhar a soma dessas entradas.
 
+## Preferências
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/api/settings` | preferências efetivas + descrição de cada uma |
+| PUT | `/api/settings` | grava uma ou mais preferências |
+
+Hoje existe uma preferência: `auto_recurring` (booleana, **padrão `true`**) — controla se os
+gastos fixos do mês são gerados automaticamente. As preferências vivem na tabela `meta`,
+portanto acompanham o arquivo do banco (vão junto no backup).
+
+```bash
+curl http://localhost:8000/api/settings
+# {"settings":{"auto_recurring":true},"descricoes":{...},"atual":"2026-10"}
+
+curl -X PUT http://localhost:8000/api/settings \
+  -H 'Content-Type: application/json' -d '{"auto_recurring": false}'
+```
+
+Chave desconhecida → **422** (evita que um typo vire preferência fantasma). Corpo sem
+nenhuma preferência conhecida → **422**.
+
+## Recorrência automática
+
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/api/recurring/auto/{period}` | gera agora os fixos do mês como *previsto* |
+| DELETE | `/api/recurring/auto/{period}` | desfaz a geração automática do mês |
+| POST | `/api/cycles/{period}/repeat-recurring` | cópia manual (qualquer mês) |
+| GET | `/api/transactions-next-recurring/{period}` | só lista o que seria copiado |
+
+O `POST` responde com `criados`, `total_em_centavos`, `lancamentos` e `motivo`. `motivo` é
+`null` quando algo foi criado; caso contrário explica por que não:
+
+| `motivo` | Significado |
+|---|---|
+| `fora_do_mes_atual` | só o mês em curso recebe geração automática |
+| `desativado` | preferência `auto_recurring` desligada (não vale para `force`, usado pela interface) |
+| `nada_novo` | o mês anterior não tem fixos, ou eles já estão lançados |
+
+O `DELETE` remove apenas os lançamentos com `source = "recorrente-auto"` daquele mês — o que
+você digitou à mão, importou ou copiou pelo botão manual permanece intacto.
+
+```bash
+curl -X POST http://localhost:8000/api/recurring/auto/2026-10
+# {"period":"2026-10","criados":3,"motivo":null,"total_em_centavos":145990,"lancamentos":[...]}
+
+curl -X DELETE http://localhost:8000/api/recurring/auto/2026-10
+# {"ok":true,"period":"2026-10","removidos":3}
+```
+
+Período inválido (`2026-13`, `abc`) → **422**.
+
+## Orçamento por categoria
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/api/budget/{period}` | limite × gasto por categoria no mês |
+| POST/PATCH | `/api/categories` | `budget` (centavos) define/remove o limite da categoria |
+
+A resposta traz os totais do mês (`orcado`, `gasto`, `previsto`, `disponivel`, `pct`,
+`acima`) e a lista `categorias`, cada uma com `budget`, `gasto` (só realizado), `previsto`,
+`disponivel`, `pct`, `acima` e `perto` (≥ 80% do limite). Categorias **sem** limite não
+aparecem; categorias com limite e sem gasto aparecem com `gasto: 0`.
+
+É informação pura: nenhum endpoint gera alerta de orçamento (o mesmo conteúdo vem embutido
+em `/api/summary/{period}` no campo `orcamento`).
+
+```bash
+curl -X PATCH http://localhost:8000/api/categories/9 \
+  -H 'Content-Type: application/json' -d '{"budget": 80000}'   # R$ 800,00
+curl http://localhost:8000/api/budget/2026-10
+```
+
 ## Importação
 
 | Método | Rota | Descrição |
