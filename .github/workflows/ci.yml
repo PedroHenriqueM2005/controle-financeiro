@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Checagem de sintaxe
+        run: python -m compileall -q app tests run.py
+
+      - name: Testes
+        env:
+          FINANCAS_DATA_DIR: ${{ runner.temp }}/financas-data
+        run: pytest -q
+
+      - name: Servidor sobe e responde
+        env:
+          FINANCAS_DATA_DIR: ${{ runner.temp }}/financas-boot
+          FINANCAS_PORT: "8123"
+        run: |
+          python run.py --port 8123 &
+          for i in $(seq 1 30); do
+            if python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8123/healthz',timeout=2)" 2>/dev/null; then
+              echo "servidor respondeu"; exit 0
+            fi
+            sleep 1
+          done
+          echo "servidor não respondeu"; exit 1

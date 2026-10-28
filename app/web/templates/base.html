@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 16.5 9 11l3.5 3.5L20 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 7h5v5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="brand-text">
+        <strong>{{ app_name }}</strong>
+        <small>{{ tagline }}</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="Principal">
+      {% for key, href, label in nav %}
+        <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <div class="topbar-right">
+      <span class="today" title="Hoje">{{ current_period }}</span>
+      <a class="btn ghost sm" href="/api/docs" target="_blank" rel="noopener">API</a>
+    </div>
+  </div>
+</header>
+
+{% if msg or erro %}
+<div class="wrap">
+  {% if msg %}<div class="flash ok" role="status">{{ msg }}</div>{% endif %}
+  {% if erro %}<div class="flash err" role="alert">{{ erro }}</div>{% endif %}
+</div>
+{% endif %}
+
+<main class="wrap">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="wrap footer">
+  <span>{{ app_name }} v{{ app_version }} · dados guardados localmente em <code>data/financas.db</code></span>
+  <span>
+    <a href="/api/export/csv">CSV</a> ·
+    <a href="/api/export/xlsx">Excel</a> ·
+    <a href="/api/docs">API</a>
+  </span>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

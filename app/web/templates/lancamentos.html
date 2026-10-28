@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tx_row, vazio, badge %}
+
+{% block title %}Lançamentos — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Lançamentos</h1>
+    <p class="muted">{{ total }} registro(s) encontrado(s){% if totais %} · entradas {{ totais.entradas_realizadas|brl }} · saídas {{ totais.saidas_realizadas|brl }}{% endif %}</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn sm" href="/api/export/csv{% if period %}?period={{ period }}{% endif %}">Exportar CSV</a>
+    <a class="btn sm" href="/api/export/xlsx{% if period %}?period={{ period }}{% endif %}">Exportar Excel</a>
+  </div>
+</section>
+
+<form class="card filters" method="get" action="/lancamentos">
+  <label>
+    <span>Mês</span>
+    <select name="period">
+      <option value="">todos</option>
+      {% for p in periodos %}<option value="{{ p }}" {% if filtros.period and p == filtros.period %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>
+    <span>Tipo</span>
+    <select name="type">
+      <option value="">todos</option>
+      <option value="saida" {% if filtros.type == 'saida' %}selected{% endif %}>saída</option>
+      <option value="entrada" {% if filtros.type == 'entrada' %}selected{% endif %}>entrada</option>
+    </select>
+  </label>
+  <label>
+    <span>Situação</span>
+    <select name="status">
+      <option value="">todas</option>
+      <option value="realizado" {% if filtros.status == 'realizado' %}selected{% endif %}>realizado</option>
+      <option value="previsto" {% if filtros.status == 'previsto' %}selected{% endif %}>previsto</option>
+    </select>
+  </label>
+  <label>
+    <span>Categoria</span>
+    <select name="category_id">
+      <option value="">todas</option>
+      {% for c in categorias_saida + categorias_entrada %}
+        <option value="{{ c.id }}" {% if filtros.category_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="grow">
+    <span>Busca</span>
+    <input type="search" name="q" value="{{ filtros.q or '' }}" placeholder="descrição, item ou observação">
+  </label>
+  <div class="actions">
+    <button class="btn primary sm" type="submit">Filtrar</button>
+    <a class="btn ghost sm" href="/lancamentos">Limpar</a>
+  </div>
+</form>
+
+<section class="card">
+  <header>
+    <h2>{% if filtro_period_label %}{{ filtro_period_label|capitalize }}{% else %}Todos os meses{% endif %}</h2>
+    <button class="btn sm" data-action="new-transaction">+ Novo lançamento</button>
+  </header>
+
+  {% if lancamentos %}
+    <table class="table tx-table" id="tabela-lancamentos">
+      <thead>
+        <tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Forma</th><th>Situação</th><th class="num">Valor</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for tx in lancamentos %}{{ tx_row(tx) }}{% endfor %}
+      </tbody>
+    </table>
+
+    {% if pages > 1 %}
+      <nav class="pager" aria-label="Paginação">
+        {% set base_qs = "period=" ~ (filtros.period or '') ~ "&type=" ~ (filtros.type or '') ~ "&status=" ~ (filtros.status or '') ~ "&category_id=" ~ (filtros.category_id or '') ~ "&q=" ~ (filtros.q or '') %}
+        {% if page > 1 %}<a class="btn ghost sm" href="?{{ base_qs }}&page={{ page - 1 }}">‹ anterior</a>{% endif %}
+        <span class="muted">página {{ page }} de {{ pages }}</span>
+        {% if page < pages %}<a class="btn ghost sm" href="?{{ base_qs }}&page={{ page + 1 }}">próxima ›</a>{% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    {{ vazio("Nenhum lançamento com esses filtros.", "Ajuste a busca ou cadastre um novo lançamento.") }}
+  {% endif %}
+</section>
+
+<dialog id="modal-lancamento" class="modal">
+  <form id="form-editar" class="form" autocomplete="off" novalidate>
+    <header class="modal-head">
+      <h2>Editar lançamento</h2>
+      <button type="button" class="btn icon-only" data-action="close-modal">✕</button>
+    </header>
+    <input type="hidden" name="id">
+    <div class="seg-group">
+      <label><input type="radio" name="type" value="saida"> <span>Saída</span></label>
+      <label><input type="radio" name="type" value="entrada"> <span>Entrada</span></label>
+    </div>
+    <div class="row">
+      <label class="grow"><span>Valor (R$)</span><input type="text" name="amount" inputmode="decimal" required></label>
+      <label><span>Data</span><input type="date" name="occurred_on" required></label>
+    </div>
+    <label><span>Descrição / item</span><input type="text" name="description" list="lista-itens-edit" data-autocomplete="/api/items/suggest"></label>
+    <datalist id="lista-itens-edit"></datalist>
+    <div class="row">
+      <label class="grow">
+        <span>Categoria</span>
+        <select name="category_id">
+          <option value="">— escolher —</option>
+          {% for c in categorias_saida %}<option value="{{ c.id }}" data-kind="saida">{{ c.name }}</option>{% endfor %}
+          {% for c in categorias_entrada %}<option value="{{ c.id }}" data-kind="entrada">{{ c.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="grow">
+        <span>Forma</span>
+        <select name="method">
+          <option value="">—</option>
+          {% for m in methods %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>
+        <span>Situação</span>
+        <select name="status">
+          <option value="realizado">Realizado</option>
+          <option value="previsto">Previsto</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" name="recurring" value="1"> <span>Todo mês (fixo)</span></label>
+    </div>
+    <label><span>Observação</span><input type="text" name="note" placeholder="opcional"></label>
+    <div class="actions">
+      <button class="btn primary" type="submit">Salvar</button>
+      <button class="btn ghost" type="button" data-action="close-modal">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% from "_macros.html" import vazio, badge, barra %}
+
+{% block title %}Configurações — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Configurações</h1>
+    <p class="muted">Salário previsto de cada mês, categorias com limite de gasto e dados do sistema.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn ghost sm" href="/?period={{ anterior }}">‹ {{ anterior }}</a>
+    <span class="chip static">{{ period }}</span>
+    <a class="btn ghost sm" href="/?period={{ proximo }}">{{ proximo }} ›</a>
+  </div>
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Salário previsto — {{ period }}</h2></header>
+    <form id="form-ciclo" class="form" data-period="{{ period }}">
+      <p class="hint small">
+        É o valor que você <strong>pretende receber</strong> no mês. Entradas extras (freelance, reembolso)
+        são lançamentos avulsos e entram por cima dessa base.
+        {% if ciclo.expected_locked %}Valor definido manualmente.{% else %}Atualmente sincronizado com os lançamentos de “Salário”.{% endif %}
+      </p>
+      <div class="row">
+        <label class="grow"><span>Valor previsto (R$)</span><input type="text" name="expected_income" inputmode="decimal" value="{{ '%.2f'|format((ciclo.expected_income_centavos or 0) / 100)|replace('.', ',') }}" placeholder="0,00"></label>
+        <label><span>Dia do pagamento</span><input type="number" name="payday_day" min="1" max="31" value="{{ ciclo.payday_day or '' }}" placeholder="ex.: 5"></label>
+      </div>
+      <label><span>Observação</span><input type="text" name="note" value="{{ ciclo.note or '' }}" placeholder="ex.: salário + vale refeição"></label>
+      <div class="actions"><button class="btn primary" type="submit">Salvar ciclo</button></div>
+    </form>
+
+    <h3 class="sub-title">Ciclos já configurados</h3>
+    {% if ciclos %}
+      <table class="table tight">
+        <thead><tr><th>Mês</th><th class="num">Previsto</th><th class="num">Dia</th><th>Obs.</th><th></th></tr></thead>
+        <tbody>
+          {% for c in ciclos %}
+            <tr>
+              <td><a class="link" href="/?period={{ c.period }}">{{ c.period }}</a></td>
+              <td class="num strong">{{ c.expected_fmt }}</td>
+              <td class="num">{{ c.payday_day or '—' }}</td>
+              <td class="muted">{{ c.note or '' }}</td>
+              <td class="col-acoes"><a class="btn icon-only" href="/configuracoes?period={{ c.period }}" title="Editar">✎</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ vazio("Nenhum ciclo configurado.", "Defina acima o salário previsto do mês para o painel calcular o percentual comprometido.") }}
+    {% endif %}
+  </article>
+
+  <article class="card">
+    <header><h2>Dados do sistema</h2></header>
+    <dl class="metrics">
+      <div><dt>Lançamentos</dt><dd class="strong">{{ stats.lancamentos or 0 }}</dd></div>
+      <div><dt>Meses com movimento</dt><dd>{{ stats.meses or 0 }}</dd></div>
+      <div><dt>Itens no catálogo</dt><dd>{{ stats.itens or 0 }}</dd></div>
+      <div><dt>Importações</dt><dd>{{ stats.importacoes or 0 }}</dd></div>
+      <div><dt>Primeiro lançamento</dt><dd>{{ stats.primeiro or '—' }}</dd></div>
+      <div><dt>Último lançamento</dt><dd>{{ stats.ultimo or '—' }}</dd></div>
+    </dl>
+    <div class="actions wrap-actions">
+      <a class="btn sm" href="/api/export/xlsx">Backup em Excel</a>
+      <a class="btn ghost sm" href="/api/export/csv">Backup em CSV</a>
+      <button class="btn ghost sm" data-action="seed-demo">Gerar dados de demonstração</button>
+      <a class="btn ghost sm" href="/api/docs" target="_blank" rel="noopener">Documentação da API</a>
+    </div>
+    <p class="hint small">
+      Tudo fica em <code>data/financas.db</code> (SQLite). Para recomeçar do zero, pare o servidor e apague
+      essa pasta — ou copie o arquivo para outro lugar como backup.
+    </p>
+    <h3 class="sub-title">Formas de pagamento em uso</h3>
+    <div class="chips">
+      {% for m in methods %}<span class="chip static">{{ m }}</span>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Categorias de saída</h2><span class="muted">limite mensal opcional</span></header>
+    <table class="table tight" id="tabela-categorias-saida">
+      <thead><tr><th>Categoria</th><th class="num">Limite</th><th class="num">Gasto em {{ period }}</th><th class="num">Uso</th><th></th></tr></thead>
+      <tbody>
+        {% for c in categorias_saida %}
+          <tr data-id="{{ c.id }}">
+            <td><i class="dot" style="background: {{ c.color }}"></i>{{ c.name }}</td>
+            <td class="num">{{ c.budget_fmt or '—' }}</td>
+            <td class="num">
+              {{ c.total_mes_fmt }}
+              {% if c.estourou %}<span class="badge danger">estourou</span>{% endif %}
+            </td>
+            <td class="num muted">{{ c.usos }}</td>
+            <td class="col-acoes">
+              <button class="btn icon-only" data-action="edit-category" data-id="{{ c.id }}"
+                      data-cat='{{ {"id": c.id, "name": c.name, "kind": c.kind, "color": c.color, "budget": c.budget_centavos}|tojson }}'>✎</button>
+              <button class="btn icon-only danger" data-action="delete-category" data-id="{{ c.id }}" data-name="{{ c.name }}">🗑</button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+
+  <article class="card">
+    <header><h2>Categorias de entrada</h2></header>
+    <table class="table tight" id="tabela-categorias-entrada">
+      <thead><tr><th>Categoria</th><th class="num">Recebido em {{ period }}</th><th class="num">Uso</th><th></th></tr></thead>
+      <tbody>
+        {% for c in categorias_entrada %}
+          <tr data-id="{{ c.id }}">
+            <td><i class="dot" style="background: {{ c.color }}"></i>{{ c.name }}</td>
+            <td class="num">{{ c.total_mes_fmt }}</td>
+            <td class="num muted">{{ c.usos }}</td>
+            <td class="col-acoes">
+              <button class="btn icon-only" data-action="edit-category" data-id="{{ c.id }}"
+                      data-cat='{{ {"id": c.id, "name": c.name, "kind": c.kind, "color": c.color, "budget": c.budget_centavos}|tojson }}'>✎</button>
+              <button class="btn icon-only danger" data-action="delete-category" data-id="{{ c.id }}" data-name="{{ c.name }}">🗑</button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h3 class="sub-title">Nova categoria</h3>
+    <form id="form-categoria" class="form">
+      <div class="row">
+        <label class="grow"><span>Nome</span><input type="text" name="name" required placeholder="ex.: Pets"></label>
+        <label><span>Tipo</span>
+          <select name="kind"><option value="saida">Saída</option><option value="entrada">Entrada</option></select>
+        </label>
+        <label><span>Cor</span><input type="color" name="color" value="#64748b"></label>
+      </div>
+      <div class="row">
+        <label class="grow"><span>Limite mensal (R$) — opcional</span><input type="text" name="budget" inputmode="decimal" placeholder="ex.: 400,00"></label>
+      </div>
+      <div class="actions"><button class="btn primary" type="submit">Criar categoria</button></div>
+    </form>
+  </article>
+</section>
+
+<dialog id="modal-categoria" class="modal">
+  <form id="form-categoria-editar" class="form">
+    <header class="modal-head">
+      <h2>Editar categoria</h2>
+      <button type="button" class="btn icon-only" data-action="close-modal">✕</button>
+    </header>
+    <input type="hidden" name="id">
+    <label><span>Nome</span><input type="text" name="name" required></label>
+    <div class="row">
+      <label><span>Tipo</span>
+        <select name="kind"><option value="saida">Saída</option><option value="entrada">Entrada</option></select>
+      </label>
+      <label><span>Cor</span><input type="color" name="color"></label>
+      <label class="grow"><span>Limite mensal (R$)</span><input type="text" name="budget" inputmode="decimal" placeholder="vazio = sem limite"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="archived" value="1"> <span>Arquivar (some das listas, mantém histórico)</span></label>
+    <div class="actions">
+      <button class="btn primary" type="submit">Salvar</button>
+      <button class="btn ghost" type="button" data-action="close-modal">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>window.PAGE = "configuracoes";</script>
+{% endblock %}

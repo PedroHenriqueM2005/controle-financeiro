@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% from "_macros.html" import vazio, badge %}
+
+{% block title %}Importar planilha — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Importar planilha</h1>
+    <p class="muted">Traga seus extratos e planilhas antigas: eles viram lançamentos comparáveis com os meses seguintes.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn ghost sm" href="/api/export/template">Baixar modelo (.xlsx)</a>
+  </div>
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>1. Enviar arquivo</h2></header>
+    <form id="form-import" class="form" enctype="multipart/form-data">
+      <label class="file">
+        <span>Planilha (.csv, .xlsx, .xlsm — até {{ max_mb }} MB)</span>
+        <input type="file" name="file" accept=".csv,.xlsx,.xlsm,.txt" required>
+      </label>
+      <div class="row">
+        <label>
+          <span>Tipo padrão (sem coluna “tipo”)</span>
+          <select name="default_type">
+            <option value="saida">Saída (planilha só de gastos)</option>
+            <option value="entrada">Entrada</option>
+          </select>
+        </label>
+        <label>
+          <span>Situação padrão</span>
+          <select name="default_status">
+            <option value="realizado">Realizado</option>
+            <option value="previsto">Previsto</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="grow">
+          <span>Categoria padrão (se a planilha não tiver)</span>
+          <select name="default_category">
+            <option value="">— não categorizar —</option>
+            {% for c in categorias_saida %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}
+            {% for c in categorias_entrada %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Aba (planilhas .xlsx)</span>
+          <select name="sheet"><option value="0">primeira</option></select>
+        </label>
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" name="create_categories" checked> <span>Criar categorias novas</span></label>
+        <label class="check"><input type="checkbox" name="create_items" checked> <span>Registrar itens novos no catálogo</span></label>
+        <label class="check"><input type="checkbox" name="skip_duplicates" checked> <span>Ignorar linhas duplicadas</span></label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Analisar planilha</button>
+        <span class="hint small" id="import-status"></span>
+      </div>
+    </form>
+  </article>
+
+  <article class="card">
+    <header><h2>Como o reconhecimento funciona</h2></header>
+    <ul class="tips">
+      <li><strong>Cabeçalho automático:</strong> procuramos palavras como <code>Data</code>, <code>Valor</code>, <code>Descrição</code>, <code>Categoria</code>, <code>Tipo</code>, <code>Status</code>, <code>Forma de pagamento</code> — em português ou inglês.</li>
+      <li><strong>Números flexíveis:</strong> <code>1.234,56</code>, <code>R$ 1.234,56</code>, <code>1234.56</code> e <code>(150,00)</code> são entendidos.</li>
+      <li><strong>Datas flexíveis:</strong> <code>05/10/2026</code>, <code>2026-10-05</code> e número de série do Excel.</li>
+      <li><strong>Extrato bancário:</strong> sem coluna de tipo, valores negativos viram saída e positivos viram entrada.</li>
+      <li><strong>Reversível:</strong> cada importação vira um lote que pode ser desfeito abaixo.</li>
+      <li>Você pode <strong>corrigir o mapeamento</strong> na prévia antes de confirmar.</li>
+    </ul>
+  </article>
+</section>
+
+<section class="card" id="preview-card" hidden>
+  <header>
+    <h2>2. Conferir e mapear colunas</h2>
+    <span class="muted" id="preview-file"></span>
+  </header>
+
+  <div class="kpis" id="preview-counts"></div>
+  <div id="preview-periods" class="chips"></div>
+
+  <div class="scroll-x">
+    <table class="table tight" id="preview-mapping"></table>
+  </div>
+
+  <h3 class="sub-title">Prévia das linhas</h3>
+  <div class="scroll-x">
+    <table class="table tight" id="preview-rows"></table>
+  </div>
+
+  <div id="preview-errors"></div>
+
+  <div class="actions end">
+    <button class="btn ghost" type="button" data-action="cancel-import">Cancelar</button>
+    <button class="btn primary" type="button" data-action="commit-import">3. Confirmar importação</button>
+  </div>
+</section>
+
+<section class="card">
+  <header><h2>Importações já feitas</h2></header>
+  {% if importacoes %}
+    <table class="table tight">
+      <thead>
+        <tr><th>Arquivo</th><th>Quando</th><th class="num">Linhas</th><th class="num">Importadas</th><th class="num">Ignoradas</th><th>Período coberto</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for i in importacoes %}
+          <tr>
+            <td><strong>{{ i.filename }}</strong><br><small class="muted">{{ i.source_tag }}</small></td>
+            <td>{{ i.imported_at }}</td>
+            <td class="num">{{ i.rows_total }}</td>
+            <td class="num strong">{{ i.rows_imported }}</td>
+            <td class="num muted">{{ i.rows_skipped }}</td>
+            <td class="muted">{{ i.first_date or '—' }} → {{ i.last_date or '—' }}</td>
+            <td class="col-acoes">
+              <button class="btn icon-only danger" data-action="undo-import" data-id="{{ i.id }}"
+                      title="Desfazer esta importação (remove {{ i.rows_imported }} lançamento(s))">↺</button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ vazio("Nenhuma importação ainda.", "Envie um CSV/XLSX acima ou baixe o modelo para preencher.") }}
+  {% endif %}
+</section>
+
+<script id="import-meta" type="application/json">{{ {"campos": campos, "categorias_saida": categorias_saida|map(attribute='name')|list}|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script>window.PAGE = "importar";</script>
+{% endblock %}

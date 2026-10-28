@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% from "_macros.html" import card, vazio, badge %}
+
+{% block title %}Relatórios e comparativos — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Relatórios</h1>
+    <p class="muted">Comparativos entre meses — inclusive os que vieram de planilhas importadas.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn sm" href="/api/export/xlsx">Excel completo</a>
+    <a class="btn ghost sm" href="/api/export/resumo-csv?months={{ meses }}">CSV resumo mensal</a>
+  </div>
+</section>
+
+<form class="card filters" method="get" action="/relatorios">
+  <label>
+    <span>Mês de referência (A)</span>
+    <select name="a">
+      {% for p in periodos %}<option value="{{ p }}" {% if p == mes_a %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>
+    <span>Comparar com (B)</span>
+    <select name="b">
+      {% for p in periodos %}<option value="{{ p }}" {% if p == mes_b %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>
+    <span>Meses na tabela</span>
+    <select name="months">
+      {% for m in [6, 12, 18, 24, 36] %}<option value="{{ m }}" {% if m == meses %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="actions">
+    <button class="btn primary sm" type="submit">Comparar</button>
+    <a class="btn ghost sm" href="/relatorios">Padrão (mês atual × anterior)</a>
+  </div>
+</form>
+
+{% if not tem_dados %}
+  {{ vazio("Ainda não há dados suficientes para comparar.", "Lançe seus gastos ou importe uma planilha antiga em Importar planilha.") }}
+{% endif %}
+
+<section class="cards">
+  {{ card("Entradas · " ~ comparativo.rotulo_atual, comparativo.atual.entradas_realizadas|brl,
+          "em " ~ comparativo.rotulo_anterior ~ ": " ~ (comparativo.anterior.entradas_realizadas|brl), '#16a34a',
+          comparativo.totais.entradas.delta_fmt ~ " (" ~ comparativo.totais.entradas.pct_fmt ~ ")",
+          True if comparativo.totais.entradas.delta >= 0 else False) }}
+  {{ card("Saídas · " ~ comparativo.rotulo_atual, comparativo.atual.saidas_realizadas|brl,
+          "em " ~ comparativo.rotulo_anterior ~ ": " ~ (comparativo.anterior.saidas_realizadas|brl), '#ef4444',
+          comparativo.totais.saidas.delta_fmt ~ " (" ~ comparativo.totais.saidas.pct_fmt ~ ")",
+          False if comparativo.totais.saidas.delta > 0 else True) }}
+  {{ card("Saldo · " ~ comparativo.rotulo_atual, comparativo.atual.saldo_real|brl,
+          "em " ~ comparativo.rotulo_anterior ~ ": " ~ (comparativo.anterior.saldo_real|brl), '#0ea5e9',
+          comparativo.totais.saldo.delta_fmt,
+          True if comparativo.totais.saldo.delta >= 0 else False) }}
+  {{ card("Contas previstas", comparativo.atual.saidas_previstas|brl,
+          "ainda a pagar neste mês", '#f97316', None, None) }}
+</section>
+
+<p class="lead">{{ comparativo.resumo_texto|capitalize }}.</p>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Categorias: A × B</h2><span class="muted">{{ comparativo.rotulo_atual }} vs {{ comparativo.rotulo_anterior }}</span></header>
+    {% if comparativo.categorias %}
+      <div class="scroll-x">
+        <table class="table tight">
+          <thead><tr><th>Categoria</th><th class="num">A</th><th class="num">B</th><th class="num">Variação</th><th class="num">%</th></tr></thead>
+          <tbody>
+            {% for c in comparativo.categorias %}
+              <tr class="{{ 'row-bad' if c.delta > 0 else ('row-good' if c.delta < 0 else '') }}">
+                <td>{% if c.color %}<i class="dot" style="background: {{ c.color }}"></i>{% endif %}{{ c.name }}</td>
+                <td class="num">{{ c.atual|brl }}</td>
+                <td class="num muted">{{ c.anterior|brl }}</td>
+                <td class="num strong">{{ c.delta_fmt }}</td>
+                <td class="num">{{ c.pct_fmt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {{ grafico_variacoes|safe }}
+    {% else %}
+      {{ vazio("Sem gastos categorizados nesses meses.") }}
+    {% endif %}
+  </article>
+
+  <article class="card">
+    <header><h2>Itens: preço médio A × B</h2><span class="badge">reconhece itens repetidos</span></header>
+    {% if comparativo.itens %}
+      <div class="scroll-x">
+        <table class="table tight">
+          <thead>
+            <tr><th>Item</th><th class="num">Qtd A/B</th><th class="num">Preço médio A</th><th class="num">B</th><th class="num">Δ preço</th><th class="num">Δ total</th></tr>
+          </thead>
+          <tbody>
+            {% for i in comparativo.itens[:25] %}
+              <tr>
+                <td>
+                  {{ i.name }}
+                  {% if i.novo %}<span class="badge ok">novo</span>
+                  {% elif i.sumiu %}<span class="badge neutro">não comprado</span>{% endif %}
+                </td>
+                <td class="num muted">{{ i.qtd_atual }}/{{ i.qtd_anterior }}</td>
+                <td class="num">{{ i.preco_medio_atual_fmt or '—' }}</td>
+                <td class="num muted">{{ i.preco_medio_anterior_fmt or '—' }}</td>
+                <td class="num">
+                  {% if i.preco_variacao_pct is not none %}
+                    <span class="badge {{ 'danger' if i.preco_subiu else 'ok' }}">{{ i.preco_variacao_fmt }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td class="num strong">{{ i.delta_fmt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ vazio("Sem itens comparáveis.", "Itens surgem quando você marca “salvar item no catálogo” ao lançar uma despesa.") }}
+    {% endif %}
+  </article>
+</section>
+
+<section class="card">
+  <header><h2>Evolução ({{ meses }} meses)</h2></header>
+  {{ grafico_serie|safe }}
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Saldo acumulado</h2><span class="muted">fecha em {{ acumulado.final_fmt }}</span></header>
+    {{ grafico_acumulado|safe }}
+  </article>
+  <article class="card">
+    <header><h2>Destaques</h2></header>
+    {% if destaques.melhor %}
+      <dl class="metrics">
+        <div><dt>Melhor mês</dt><dd class="pos">{{ destaques.melhor.label }} · {{ destaques.melhor.saldo_fmt }}</dd></div>
+        <div><dt>Pior mês</dt><dd class="neg">{{ destaques.pior.label }} · {{ destaques.pior.saldo_fmt }}</dd></div>
+        <div><dt>Saldo médio</dt><dd>{{ destaques.media_saldo_fmt }}</dd></div>
+        <div><dt>Taxa de poupança média</dt><dd class="strong">{{ destaques.taxa_poupanca_fmt }}</dd></div>
+        <div><dt>Meses analisados</dt><dd>{{ destaques.meses_analisados }}</dd></div>
+      </dl>
+      <h3 class="sub-title">Mesmo mês do ano anterior</h3>
+      <p class="muted">
+        {{ anual.rotulo_atual }}: saídas {{ anual.atual.saidas_realizadas|brl }} ·
+        {{ anual.rotulo_anterior }}: {{ anual.anterior.saidas_realizadas|brl }}
+        ({{ anual.totais.saidas.pct_fmt }})
+      </p>
+    {% else %}
+      {{ vazio("Sem histórico suficiente.") }}
+    {% endif %}
+  </article>
+</section>
+
+<section class="card">
+  <header>
+    <h2>Planilha mestra: categorias × meses</h2>
+    <a class="btn ghost sm" href="/api/export/resumo-csv?months={{ meses }}">baixar CSV</a>
+  </header>
+  {% if matriz.linhas %}
+    <div class="scroll-x">
+      <table class="table matrix">
+        <thead>
+          <tr>
+            <th class="sticky-col">Categoria</th>
+            {% for c in matriz.cabecalho %}<th class="num" title="{{ c.full }}">{{ c.label }}</th>{% endfor %}
+            <th class="num">Total</th><th class="num">Média</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for linha in matriz.linhas %}
+            <tr>
+              <td class="sticky-col">{% if linha.color %}<i class="dot" style="background: {{ linha.color }}"></i>{% endif %}{{ linha.name }}</td>
+              {% for cel in linha.celulas %}
+                <td class="num {{ 'muted' if not cel.valor }}">{{ cel.valor_fmt }}</td>
+              {% endfor %}
+              <td class="num strong">{{ linha.total_fmt }}</td>
+              <td class="num muted">{{ linha.media_fmt }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          {% for chave, rotulo in [('entradas', 'Entradas realizadas'), ('saidas', 'Saídas realizadas'), ('saldo', 'Saldo do mês')] %}
+            <tr class="total-row">
+              <td class="sticky-col">{{ rotulo }}</td>
+              {% for cel in matriz.rodape[chave] %}<td class="num {{ 'pos' if cel.valor > 0 else ('neg' if cel.valor < 0 else '') }}">{{ cel.valor_fmt }}</td>{% endfor %}
+              <td></td><td></td>
+            </tr>
+          {% endfor %}
+        </tfoot>
+      </table>
+    </div>
+  {% else %}
+    {{ vazio("Sem dados para montar a matriz.") }}
+  {% endif %}
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Formas de pagamento: A × B</h2></header>
+    {% if comparativo.metodos %}
+      <table class="table tight">
+        <thead><tr><th>Forma</th><th class="num">A</th><th class="num">B</th><th class="num">Variação</th></tr></thead>
+        <tbody>
+          {% for m in comparativo.metodos %}
+            <tr><td>{{ m.name }}</td><td class="num">{{ m.atual|brl }}</td><td class="num muted">{{ m.anterior|brl }}</td><td class="num">{{ m.delta_fmt }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}{{ vazio("Sem dados de forma de pagamento.") }}{% endif %}
+  </article>
+
+  <article class="card">
+    <header><h2>Entradas por origem: A × B</h2></header>
+    {% if comparativo.entradas_categorias %}
+      <table class="table tight">
+        <thead><tr><th>Origem</th><th class="num">A</th><th class="num">B</th><th class="num">Variação</th></tr></thead>
+        <tbody>
+          {% for e in comparativo.entradas_categorias %}
+            <tr><td>{{ e.name }}</td><td class="num">{{ e.atual|brl }}</td><td class="num muted">{{ e.anterior|brl }}</td><td class="num">{{ e.delta_fmt }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}{{ vazio("Sem entradas registradas nesses meses.") }}{% endif %}
+  </article>
+</section>
+{% endblock %}

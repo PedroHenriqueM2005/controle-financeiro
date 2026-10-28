@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% from "_macros.html" import card, barra, badge, tx_row, vazio %}
+{% set r = resumo %}
+
+{% block title %}Painel · {{ r.label }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Painel de {{ r.label }}</h1>
+    <p class="muted">
+      Dia {{ r.dias_corridos }} de {{ r.total_dias }} · faltam {{ r.dias_restantes }} dia(s) ·
+      {{ r.total_lancamentos }} lançamento(s) neste mês
+    </p>
+  </div>
+  <div class="toolbar">
+    <a class="btn ghost sm" href="/?period={{ anterior }}" title="Mês anterior">‹ {{ anterior }}</a>
+    <form method="get" action="/" class="inline">
+      <select name="period" onchange="this.form.submit()" aria-label="Selecionar mês">
+        {% for p in periodos %}
+          <option value="{{ p }}" {% if p == period %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+        {% if period not in periodos %}<option value="{{ period }}" selected>{{ period }}</option>{% endif %}
+      </select>
+    </form>
+    <a class="btn ghost sm" href="/?period={{ proximo }}" title="Próximo mês">{{ proximo }} ›</a>
+    <a class="btn sm" href="/api/export/xlsx?period={{ period }}">Exportar Excel</a>
+  </div>
+</section>
+
+<div class="cards">
+  {{ card("Salário previsto", r.salario_previsto_fmt,
+          ("dia " ~ r.payday_day ~ " (editável em Configurações)") if r.payday_day else "defina em Configurações → Ciclos",
+          '#6366f1', icon='💼') }}
+  {{ card("Recebido no mês", r.entradas_realizadas_fmt,
+          ("+ " ~ r.entradas_previstas_fmt ~ " a receber") if r.entradas_previstas else "nada pendente",
+          '#16a34a',
+          r.delta_vs_anterior.entradas_fmt ~ " vs " ~ r.anterior_label,
+          True if r.delta_vs_anterior.entradas >= 0 else False, icon='⬇') }}
+  {{ card("Gasto no mês", r.saidas_realizadas_fmt,
+          ("+ " ~ r.saidas_previstas_fmt ~ " a pagar") if r.saidas_previstas else "sem contas pendentes",
+          '#ef4444',
+          r.delta_vs_anterior.saidas_fmt ~ " vs " ~ r.anterior_label,
+          False if r.delta_vs_anterior.saidas > 0 else True, icon='⬆') }}
+  {{ card("Saldo do mês", r.saldo_real_fmt,
+          "projeção: " ~ r.saldo_projetado_fmt,
+          '#0ea5e9', None, True if r.saldo_real >= 0 else False, icon='◎') }}
+</div>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Situação do mês</h2></header>
+    <div class="gauge">
+      <div class="gauge-row">
+        <span>% da receita já comprometido</span>
+        <strong>{{ r.comprometido_pct_fmt }}</strong>
+      </div>
+      {{ barra(r.comprometido_pct, '#f97316', 12) }}
+      <div class="gauge-row">
+        <span>Mês decorrido</span>
+        <strong>{{ r.pct_mes_decorrido|round(0)|int }}%</strong>
+      </div>
+      {{ barra(r.pct_mes_decorrido, '#64748b', 12) }}
+      <p class="hint">
+        {% if not r.total_lancamentos %}
+          Lance seus gastos e recebimentos para acompanhar o ritmo aqui.
+        {% elif r.comprometido_pct is not none and r.comprometido_pct > r.pct_mes_decorrido + 10 %}
+          ⚠️ Você está gastando mais rápido do que o mês anda.
+        {% else %}
+          ✅ Ritmo de gastos compatível com o avanço do mês.
+        {% endif %}
+      </p>
+    </div>
+    <dl class="metrics">
+      <div><dt>Média de gasto por dia</dt><dd>{{ r.media_diaria_gasto_fmt }}</dd></div>
+      <div><dt>Pode gastar/dia até o fim do mês</dt><dd class="strong">{{ r.sugestao_gasto_diario_fmt }}</dd></div>
+      <div><dt>Gastos fixos (recorrentes)</dt><dd>{{ r.fixos_variaveis.fixos_fmt }} ({{ r.fixos_variaveis.fixos_pct or 0 }}%)</dd></div>
+      <div><dt>Gastos variáveis</dt><dd>{{ r.fixos_variaveis.variaveis_fmt }}</dd></div>
+    </dl>
+  </article>
+
+  <article class="card">
+    <header>
+      <h2>Adicionar lançamento</h2>
+      <a class="btn ghost sm" href="/lancamentos?period={{ period }}">ver todos</a>
+    </header>
+    <form id="form-lancamento" class="form" data-period="{{ period }}" autocomplete="off" novalidate>
+      <div class="seg-group" role="group" aria-label="Tipo">
+        <label><input type="radio" name="type" value="saida" checked> <span>Saída (gasto)</span></label>
+        <label><input type="radio" name="type" value="entrada"> <span>Entrada (recebido)</span></label>
+      </div>
+      <div class="row">
+        <label class="grow">
+          <span>Valor (R$)</span>
+          <input type="text" name="amount" inputmode="decimal" placeholder="0,00" required data-price-check>
+        </label>
+        <label>
+          <span>Data</span>
+          <input type="date" name="occurred_on" value="{{ r.hoje }}" required>
+        </label>
+      </div>
+      <p id="price-hint" class="hint small" hidden></p>
+      <div class="row">
+        <label class="grow">
+          <span>Descrição / item</span>
+          <input type="text" name="description" placeholder="ex.: Mercado, Aluguel, Freelance…"
+                 list="lista-itens" data-autocomplete="/api/items/suggest" required>
+          <datalist id="lista-itens"></datalist>
+        </label>
+        <input type="hidden" name="item_id">
+      </div>
+      <div class="row">
+        <label class="grow">
+          <span>Categoria</span>
+          <select name="category_id" data-categorias>
+            <option value="">— escolher —</option>
+            {% for c in categorias_saida %}<option value="{{ c.id }}" data-kind="saida">{{ c.name }}</option>{% endfor %}
+            {% for c in categorias_entrada %}<option value="{{ c.id }}" data-kind="entrada">{{ c.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="grow">
+          <span>Forma de pagamento</span>
+          <select name="method">
+            <option value="">—</option>
+            {% for m in methods %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>
+          <span>Situação</span>
+          <select name="status">
+            <option value="realizado">Realizado (já aconteceu)</option>
+            <option value="previsto">Previsto (vai acontecer)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="recurring" value="1"> <span>Todo mês (fixo)</span></label>
+        <label class="check"><input type="checkbox" name="create_item" value="1" checked> <span>Salvar item no catálogo</span></label>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn primary">Adicionar</button>
+        <button type="reset" class="btn ghost">Limpar</button>
+        <span class="hint small">Atalho: <kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
+      </div>
+    </form>
+  </article>
+</section>
+
+{% if r.alertas %}
+<section class="card alerts">
+  <header><h2>Alertas</h2></header>
+  <ul class="alert-list">
+    {% for a in r.alertas %}
+      <li class="alert {{ a.nivel }}">
+        <strong>{{ a.titulo }}</strong>
+        <span>{{ a.texto }}</span>
+        {% if a.item_id %}<a class="link" href="/itens?q={{ a.titulo|urlencode }}">ver item</a>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if recorrentes_pendentes %}
+<section class="card banner">
+  <div>
+    <strong>{{ recorrentes_pendentes|length }} gasto(s) fixo(s) do mês anterior ainda não estão em {{ r.label }}.</strong>
+    <span class="muted">Copiar todos como “previsto” economiza digitação.</span>
+  </div>
+  <button class="btn sm" data-action="repeat-recurring" data-period="{{ period }}">Repetir gastos fixos</button>
+</section>
+{% endif %}
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Histórico de 6 meses</h2><a class="btn ghost sm" href="/relatorios?a={{ period }}">comparar</a></header>
+    {{ grafico_serie|safe }}
+  </article>
+  <article class="card">
+    <header><h2>Gastos por categoria</h2></header>
+    {{ grafico_categorias|safe }}
+  </article>
+</section>
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Orçamentos do mês</h2><a class="btn ghost sm" href="/configuracoes?period={{ period }}">editar limites</a></header>
+    {% set com_orcamento = r.categorias|selectattr('budget')|list %}
+    {% if com_orcamento %}
+      <ul class="budget-list">
+        {% for c in com_orcamento %}
+          <li class="{{ 'over' if c.estourou else ('near' if c.quase_estourando else '') }}">
+            <div class="budget-head">
+              <span><i class="dot" style="background: {{ c.color }}"></i>{{ c.name }}</span>
+              <span>{{ c.total_fmt }} / {{ c.budget_fmt }}</span>
+            </div>
+            {{ barra(c.budget_pct, '#ef4444' if c.estourou else c.color, 8) }}
+            <small class="muted">{{ c.budget_pct_fmt }} do limite · {{ c.qtd }} lançamento(s)</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      {{ vazio("Nenhum limite definido ainda.", "Em Configurações → Categorias você define quanto pretende gastar por categoria e o painel passa a alertar.") }}
+    {% endif %}
+  </article>
+
+  <article class="card">
+    <header><h2>Itens mais caros do mês</h2><a class="btn ghost sm" href="/itens?period={{ period }}">catálogo</a></header>
+    {% if r.top_itens %}
+      <table class="table tight">
+        <thead><tr><th>Item</th><th class="num">Compras</th><th class="num">Preço médio</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          {% for i in r.top_itens %}
+            <tr>
+              <td>{% if i.item_id %}<a class="link" href="/itens?q={{ i.name|urlencode }}">{{ i.name }}</a>{% else %}{{ i.name }}{% endif %}</td>
+              <td class="num">{{ i.qtd }}</td>
+              <td class="num">{{ i.preco_medio_fmt }}</td>
+              <td class="num strong">{{ i.total_fmt }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ vazio("Sem gastos neste mês.", "Use o formulário acima para lançar a primeira despesa.") }}
+    {% endif %}
+
+    {% if alertas_preco %}
+      <h3 class="sub-title">Preços que mudaram vs. meses anteriores</h3>
+      <ul class="price-alerts">
+        {% for a in alertas_preco[:6] %}
+          <li class="{{ 'up' if a.subiu else 'down' }}">
+            <span>{{ a.name }}</span>
+            <strong>{{ a.variacao_fmt }}</strong>
+            <small>{{ a.media_antes_fmt }} → {{ a.media_mes_fmt }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </article>
+</section>
+
+<section class="card">
+  <header>
+    <h2>Últimos lançamentos de {{ r.label }}</h2>
+    <a class="btn ghost sm" href="/lancamentos?period={{ period }}">ver mês completo ({{ r.total_lancamentos }})</a>
+  </header>
+  {% if r.ultimos %}
+    <table class="table tx-table">
+      <thead>
+        <tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Forma</th><th>Situação</th><th class="num">Valor</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for tx in r.ultimos %}{{ tx_row(tx) }}{% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ vazio("Nenhum lançamento em " ~ r.label ~ ".", "Comece informando o salário (previsto ou recebido) no formulário acima.") }}
+  {% endif %}
+</section>
+{% endblock %}

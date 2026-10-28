@@ -1,0 +1,62 @@
+{% macro card(titulo, valor, sub=None, cor=None, delta_txt=None, delta_bom=None, icon=None) -%}
+<article class="card stat" {% if cor %}style="--accent: {{ cor }}"{% endif %}>
+  <header>
+    <h3>{{ titulo }}</h3>
+    {% if icon %}<span class="icon" aria-hidden="true">{{ icon }}</span>{% endif %}
+  </header>
+  <p class="value">{{ valor }}</p>
+  {% if sub %}<p class="sub">{{ sub }}</p>{% endif %}
+  {% if delta_txt %}
+    <p class="delta {{ 'up' if delta_bom == True else ('down' if delta_bom == False else 'flat') }}">{{ delta_txt }}</p>
+  {% endif %}
+</article>
+{%- endmacro %}
+
+{% macro barra(pct, cor='#0ea5e9', altura=None) -%}
+{% set largura = [0, [(pct or 0)|round(1), 100]|max]|max %}
+<span class="bar" {% if altura %}style="height: {{ altura }}px"{% endif %}>
+  <span class="bar-fill" style="width: {{ largura }}%; background: {{ cor }}"></span>
+</span>
+{%- endmacro %}
+
+{% macro badge(texto, tipo='neutro') -%}
+<span class="badge {{ tipo }}">{{ texto }}</span>
+{%- endmacro %}
+
+{% macro tx_row(tx, mostrar_data=True) -%}
+<tr class="tx {{ 'entrada' if tx.is_entrada else 'saida' }} {{ 'previsto' if tx.is_previsto else '' }}" data-id="{{ tx.id }}">
+  <td class="col-data">{% if mostrar_data %}<span title="{{ tx.occurred_on }}">{{ tx.data_fmt }}</span>{% endif %}</td>
+  <td class="col-desc">
+    <span class="dot" style="background: {{ tx.category_color }}"></span>
+    <div>
+      <strong>{{ tx.label }}</strong>
+      {% if tx.item_name and tx.description != tx.item_name %}<small>{{ tx.description }}</small>{% endif %}
+      {% if tx.note %}<small class="muted">{{ tx.note }}</small>{% endif %}
+    </div>
+  </td>
+  <td class="col-cat">{{ tx.category_name or '—' }}</td>
+  <td class="col-metodo">{{ tx.method or '—' }}</td>
+  <td class="col-status">
+    <button class="chip {{ 'ok' if not tx.is_previsto else 'warn' }}" data-action="toggle" data-id="{{ tx.id }}"
+            title="Clique para alternar previsto/realizado">
+      {{ 'realizado' if not tx.is_previsto else 'previsto' }}
+    </button>
+  </td>
+  <td class="col-valor {{ 'pos' if tx.is_entrada else 'neg' }}">{{ tx.valor_sinal_fmt }}</td>
+  <td class="col-acoes">
+    <button class="btn icon-only" data-action="edit" data-id="{{ tx.id }}" title="Editar"
+            data-tx='{{ {"id": tx.id, "type": tx.type, "status": tx.status, "occurred_on": tx.occurred_on,
+                         "amount_centavos": tx.amount_centavos, "description": tx.description,
+                         "category_id": tx.category_id, "item_id": tx.item_id, "method": tx.method,
+                         "recurring": tx.recurring, "note": tx.note}|tojson }}'>✎</button>
+    <button class="btn icon-only danger" data-action="delete" data-id="{{ tx.id }}" title="Excluir">🗑</button>
+  </td>
+</tr>
+{%- endmacro %}
+
+{% macro vazio(texto, dica=None) -%}
+<div class="empty-state">
+  <p>{{ texto }}</p>
+  {% if dica %}<small>{{ dica }}</small>{% endif %}
+</div>
+{%- endmacro %}

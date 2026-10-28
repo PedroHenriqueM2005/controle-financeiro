@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Dados do usuário (o banco é seu, não vai pro git)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Ferramentas
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Sistema
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

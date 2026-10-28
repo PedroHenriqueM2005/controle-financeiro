@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% from "_macros.html" import vazio, badge, barra %}
+
+{% block title %}Catálogo de itens — {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Catálogo de itens</h1>
+    <p class="muted">
+      {{ total_itens }} item(ns) cadastrado(s) · {{ usados }} com histórico de compra ·
+      total acumulado {{ catalogo_fmt }}
+    </p>
+  </div>
+  <div class="toolbar">
+    <form method="get" action="/itens" class="inline">
+      <input type="search" name="q" value="{{ q }}" placeholder="buscar item…">
+      <select name="period">
+        {% for p in periodos %}<option value="{{ p }}" {% if p == period %}selected{% endif %}>mês {{ p }}</option>{% endfor %}
+      </select>
+      <select name="category_id">
+        <option value="">todas as categorias</option>
+        {% for c in categorias_saida %}<option value="{{ c.id }}" {% if category_id == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+      </select>
+      <button class="btn ghost sm" type="submit">Filtrar</button>
+      <a class="btn ghost sm" href="/itens">Limpar</a>
+    </form>
+  </div>
+</section>
+
+{% if alertas_preco %}
+<section class="card">
+  <header><h2>Preços em movimento neste mês</h2><span class="badge warn">comparado com meses anteriores</span></header>
+  <ul class="price-alerts grid">
+    {% for a in alertas_preco %}
+      <li class="{{ 'up' if a.subiu else 'down' }}">
+        <span><strong>{{ a.name }}</strong> <small>{{ a.qtd_mes }} compra(s) · {{ a.total_mes_fmt }}</small></span>
+        <strong class="big">{{ a.variacao_fmt }}</strong>
+        <small>{{ a.media_antes_fmt }} → {{ a.media_mes_fmt }}</small>
+      </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="grid-2">
+  <article class="card">
+    <header><h2>Novo item</h2></header>
+    <form id="form-item" class="form" autocomplete="off">
+      <label class="grow"><span>Nome</span><input type="text" name="name" required placeholder="ex.: Arroz 5kg"></label>
+      <div class="row">
+        <label class="grow">
+          <span>Categoria</span>
+          <select name="category_id">
+            <option value="">— sem categoria —</option>
+            {% for c in categorias_saida %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label><span>Unidade</span><input type="text" name="unit" placeholder="un, kg, mês…"></label>
+      </div>
+      <label><span>Observação</span><input type="text" name="note" placeholder="opcional"></label>
+      <div class="actions"><button class="btn primary" type="submit">Cadastrar item</button></div>
+    </form>
+  </article>
+
+  <article class="card">
+    <header><h2>Como o catálogo ajuda</h2></header>
+    <ul class="tips">
+      <li>Ao lançar uma despesa, o campo de descrição sugere itens já comprados — com <strong>preço médio</strong> e data da última compra.</li>
+      <li>Se o preço informado fugir da média histórica em 10% ou mais, o formulário avisa na hora.</li>
+      <li>Na importação de planilhas, itens novos entram no catálogo automaticamente (opção marcada por padrão).</li>
+      <li>O relatório compara o preço médio de cada item entre dois meses.</li>
+    </ul>
+  </article>
+</section>
+
+<section class="card">
+  <header><h2>Itens</h2><span class="muted">ordenado por frequência de compra</span></header>
+  {% if itens %}
+    <div class="scroll-x">
+      <table class="table tight" id="tabela-itens">
+        <thead>
+          <tr>
+            <th>Item</th><th>Categoria</th><th>Un.</th>
+            <th class="num">Compras</th><th class="num">Preço médio</th><th class="num">Faixa</th>
+            <th class="num">Último preço</th><th class="num">Variação</th>
+            <th class="num">Total gasto</th><th class="num">No mês {{ period }}</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for i in itens %}
+            <tr data-id="{{ i.id }}">
+              <td>
+                <strong>{{ i.name }}</strong>
+                {% if i.note %}<small class="muted">{{ i.note }}</small>{% endif %}
+              </td>
+              <td>{% if i.category_color %}<i class="dot" style="background: {{ i.category_color }}"></i>{% endif %}{{ i.category_name or '—' }}</td>
+              <td>{{ i.unit or '—' }}</td>
+              <td class="num">{{ i.compras }}</td>
+              <td class="num">{{ i.preco_medio_fmt or '—' }}</td>
+              <td class="num muted">
+                {% if i.compras %}{{ i.preco_min_fmt }}–{{ i.preco_max_fmt }}{% else %}—{% endif %}
+              </td>
+              <td class="num">{{ i.ultimo_preco_fmt or '—' }}</td>
+              <td class="num">
+                {% if i.variacao_pct is not none %}
+                  <span class="badge {{ 'danger' if i.alerta_preco else ('warn' if i.variacao_pct > 0 else 'ok') }}">{{ i.variacao_fmt }}</span>
+                {% else %}<span class="muted">—</span>{% endif %}
+              </td>
+              <td class="num">{{ i.total_fmt }}</td>
+              <td class="num strong">{{ i.total_mes_fmt if i.compras_mes else '—' }}</td>
+              <td class="col-acoes">
+                <a class="btn icon-only" href="/lancamentos?q={{ i.name|urlencode }}" title="Ver lançamentos">🔎</a>
+                <button class="btn icon-only" data-action="edit-item" data-id="{{ i.id }}"
+                        data-item='{{ {"id": i.id, "name": i.name, "unit": i.unit, "note": i.note, "category_id": i.category_id}|tojson }}'
+                        title="Editar">✎</button>
+                <button class="btn icon-only danger" data-action="delete-item" data-id="{{ i.id }}" title="Remover do catálogo">🗑</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ vazio("Nenhum item cadastrado.", "Itens aparecem aqui automaticamente ao lançar uma despesa com a opção “salvar item no catálogo”, ou ao importar uma planilha.") }}
+  {% endif %}
+</section>
+
+<dialog id="modal-item" class="modal">
+  <form id="form-item-editar" class="form">
+    <header class="modal-head">
+      <h2>Editar item</h2>
+      <button type="button" class="btn icon-only" data-action="close-modal">✕</button>
+    </header>
+    <input type="hidden" name="id">
+    <label><span>Nome</span><input type="text" name="name" required></label>
+    <div class="row">
+      <label class="grow">
+        <span>Categoria</span>
+        <select name="category_id">
+          <option value="">— sem categoria —</option>
+          {% for c in categorias_saida %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span>Unidade</span><input type="text" name="unit"></label>
+    </div>
+    <label><span>Observação</span><input type="text" name="note"></label>
+    <div class="actions">
+      <button class="btn primary" type="submit">Salvar</button>
+      <button class="btn ghost" type="button" data-action="close-modal">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
