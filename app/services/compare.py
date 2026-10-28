@@ -146,6 +146,9 @@ def compare(conn: sqlite3.Connection, atual: str, anterior: str | None = None) -
         ib = b["por_item"].get(chave, {})
         d = delta(ia.get("total"), ib.get("total"))
         preco = delta(ia.get("preco_medio"), ib.get("preco_medio"))
+        if not ia or not ib:
+            # sem compra num dos meses não existe "variação de preço" — só de total
+            preco = {**preco, "pct": None, "pct_fmt": "—", "subiu": False, "caiu": False}
         itens.append(
             {
                 "key": chave,

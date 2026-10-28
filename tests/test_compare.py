@@ -124,3 +124,23 @@ class TestPeriodos:
         periodos = compare.periods_with_data(banco_com_dados)
         assert "2026-09" in periodos and "2026-10" in periodos
         assert periodos == sorted(periodos, reverse=True)
+
+
+class TestCasosExtremos:
+    def test_item_nao_comprado_nao_tem_variacao_de_preco(self, conn):
+        _cenario(conn)
+        # "Cinema" só existe em setembro; em outubro não foi comprado
+        r = compare.compare(conn, "2026-10", "2026-09")
+        cinema = next(i for i in r["itens"] if "cinema" in i["key"])
+        assert cinema["sumiu"] is True
+        assert cinema["preco_variacao_pct"] is None
+        assert cinema["preco_variacao_fmt"] == "—"
+        # a variação de TOTAL continua valendo (-100%)
+        assert cinema["pct"] == -100.0
+
+    def test_item_novo_tambem_fica_sem_variacao_de_preco(self, conn):
+        _cenario(conn)
+        r = compare.compare(conn, "2026-10", "2026-09")
+        dipirona = next(i for i in r["itens"] if "dipirona" in i["key"])
+        assert dipirona["novo"] is True
+        assert dipirona["preco_variacao_pct"] is None
