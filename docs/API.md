@@ -110,8 +110,22 @@ ou `status` fora do domínio.
 |---|---|---|
 | GET | `/api/categories?kind=saida&period=2026-10&include_archived=false` | lista com total do mês, limite e % usado |
 | POST | `/api/categories` | cria (`name`, `kind`, `color`, `budget` em centavos) |
-| PATCH | `/api/categories/{id}` | edita nome, tipo, cor, limite, `archived` |
+| PATCH | `/api/categories/{id}` | **parcial**: mande só o campo que quer mudar |
 | DELETE | `/api/categories/{id}` | remove e descategoriza os lançamentos |
+
+O PATCH aceita qualquer subconjunto de `name`, `kind`, `color`, `budget`, `archived` —
+ajustar só o limite mensal é o caso mais comum e não exige reenviar o resto:
+
+```bash
+curl -X PATCH http://localhost:8000/api/categories/9 \
+  -H 'Content-Type: application/json' -d '{"budget": 90000}'   # R$ 900,00
+curl -X PATCH http://localhost:8000/api/categories/9 \
+  -H 'Content-Type: application/json' -d '{"budget": null}'    # remove o limite
+```
+
+Erros: categoria inexistente → **404**; corpo sem nenhum campo → **422**; renomear para um
+nome já usado (mesmo sem acento ou com maiúsculas diferentes) → **422** com a mensagem
+`"A categoria 'X' já existe."`.
 
 ## Itens (catálogo)
 
@@ -121,7 +135,7 @@ ou `status` fora do domínio.
 | GET | `/api/items/suggest?q=cafe&limit=8` | autocomplete (catálogo + histórico) |
 | GET | `/api/items/{id}` | detalhe + histórico de compras |
 | POST | `/api/items` | cria (`name`, `category_id`, `unit`, `note`) |
-| PATCH | `/api/items/{id}` | edita |
+| PATCH | `/api/items/{id}` | **parcial**: `name`, `category_id`, `unit`, `note` |
 | DELETE | `/api/items/{id}` | remove do catálogo (lançamentos são preservados) |
 | GET | `/api/items/{id}/price-check?amount=27,90` | variação frente ao preço médio |
 | GET | `/api/items-price-alerts/{period}` | itens que mudaram de preço no mês |

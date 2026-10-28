@@ -156,8 +156,14 @@ def create_category(conn: sqlite3.Connection, name: str, kind: str, color: str, 
 def update_category(conn: sqlite3.Connection, category_id: int, data: dict[str, Any]) -> None:
     campos, params = [], []
     if "name" in data and (data["name"] or "").strip():
+        nome = data["name"].strip()
+        alvo = normalize(nome)
+        # name é UNIQUE: sem esta checagem o banco devolveria IntegrityError (HTTP 500)
+        for row in conn.execute("SELECT id, name FROM categories WHERE id != ?", (category_id,)):
+            if normalize(row["name"]) == alvo:
+                raise ValidationError(f"A categoria '{row['name']}' já existe.")
         campos.append("name = ?")
-        params.append(data["name"].strip())
+        params.append(nome)
     if "kind" in data and data["kind"] in VALID_TYPES:
         campos.append("kind = ?")
         params.append(data["kind"])

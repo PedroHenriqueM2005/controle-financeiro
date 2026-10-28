@@ -347,3 +347,79 @@ class TestPeriodsAPI:
         client.post("/api/transactions", json={"type": "saida", "amount": "10", "occurred_on": "2026-01-05",
                                                "description": "x", "method": "Pix"})
         assert "Pix" in client.get("/api/methods").json()
+
+
+class TestPatchParcial:
+    """PATCH de verdade: mandar só um campo não pode cair em 422.
+
+    Regressão — `CategoryIn`/`ItemIn` tinham `name` obrigatório, então ajustar
+    só o limite mensal (o caso mais comum em Configurações) era rejeitado.
+    """
+
+    def _categoria(self, client, nome="Pets", **extra):
+        r = client.post("/api/categories", json={"name": nome, "kind": "saida", **extra})
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    def test_atualiza_apenas_o_limite(self, client):
+        cat_id = self._categoria(client)
+        r = client.patch(f"/api/categories/{cat_id}", json={"budget": 45000})
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["budget_centavos"] == 45000
+        assert corpo["name"] == "Pets"          # o resto permanece
+        assert corpo["color"] == "#94a3b8"
+
+    def test_limite_nulo_remove_o_limite(self, client):
+        cat_id = self._categoria(client, budget=45000)
+        assert client.patch(f"/api/categories/{cat_id}", json={"budget": None}).json()["budget_centavos"] is None
+        orc = client.get("/api/budget/2026-10").json()
+        assert "Pets" not in [c["name"] for c in orc["categorias"]]
+
+    def test_atualiza_apenas_a_cor_e_arquiva(self, client):
+        cat_id = self._categoria(client)
+        assert client.patch(f"/api/categories/{cat_id}", json={"color": "#123456"}).json()["color"] == "#123456"
+        arquivada = client.patch(f"/api/categories/{cat_id}", json={"archived": True}).json()
+        assert arquivada["archived"] == 1
+        assert all(c["id"] != cat_id for c in client.get("/api/categories?kind=saida").json())
+        assert any(c["id"] == cat_id for c in client.get("/api/categories?kind=saida&include_archived=true").json())
+
+    def test_corpo_vazio_da_422(self, client):
+        cat_id = self._categoria(client)
+        assert client.patch(f"/api/categories/{cat_id}", json={}).status_code == 422
+
+    def test_categoria_inexistente_da_404(self, client):
+        assert client.patch("/api/categories/999999", json={"budget": 100}).status_code == 404
+
+    def test_nome_duplicado_da_422_e_nao_500(self, client):
+        cat_id = self._categoria(client, nome="Pets")
+        self._categoria(client, nome="Viagens")
+        r = client.patch(f"/api/categories/{cat_id}", json={"name": "Viagens"})
+        assert r.status_code == 422
+        assert "já existe" in r.json()["detail"]
+        # variação sem acento/maiúscula também é barrada (identidade normalizada)
+        assert client.patch(f"/api/categories/{cat_id}", json={"name": "VIAGENS"}).status_code == 422
+
+    def test_item_atualiza_somente_unidade(self, client):
+        item_id = client.post("/api/items", json={"name": "Arroz 5kg", "unit": "un"}).json()["id"]
+        r = client.patch(f"/api/items/{item_id}", json={"unit": "pacote"})
+        assert r.status_code == 200, r.text
+        assert r.json()["unit"] == "pacote"
+        assert r.json()["name"] == "Arroz 5kg"
+
+    def test_item_atualiza_somente_categoria(self, client):
+        cat_id = self._categoria(client, nome="Mercearia")
+        item_id = client.post("/api/items", json={"name": "Feijão 1kg"}).json()["id"]
+        r = client.patch(f"/api/items/{item_id}", json={"category_id": cat_id})
+        assert r.status_code == 200, r.text
+        assert r.json()["category_id"] == cat_id
+
+    def test_limite_definido_por_patch_aparece_no_orcamento(self, client):
+        """Fluxo completo: ajustar o limite pela API reflete no cartão de orçamento."""
+        client.post("/api/transactions", json={"type": "saida", "amount": "120,00",
+                                               "occurred_on": "2026-10-04", "description": "ração",
+                                               "category_name": "Pets"})
+        pets = next(c for c in client.get("/api/categories?kind=saida").json() if c["name"] == "Pets")
+        assert client.patch(f"/api/categories/{pets['id']}", json={"budget": 10000}).status_code == 200
+        orc = client.get("/api/budget/2026-10").json()
+        assert orc["orcado"] == 10000 and orc["gasto"] == 12000 and orc["acima"] is True

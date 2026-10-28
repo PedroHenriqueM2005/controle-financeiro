@@ -125,7 +125,7 @@ controle-financeiro/
 │   └── ARQUITETURA.md         # decisões técnicas e porquês
 ├── exemplos/
 │   └── planilha-gastos-2025.csv   # planilha de exemplo para testar a importação
-└── tests/                     # 286 testes (unidades + API + import/export)
+└── tests/                     # 295 testes (unidades + API + import/export)
 ```
 
 ---
@@ -248,7 +248,7 @@ curl http://localhost:8000/api/summary/2026-11
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 286 testes
+pytest                     # 295 testes
 pytest -k importer         # só o importador
 pytest --cov=app           # se você instalar pytest-cov
 ```

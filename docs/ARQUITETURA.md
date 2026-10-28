@@ -192,7 +192,7 @@ para tornar essa troca localizada.
 
 ## Testes
 
-286 testes em `tests/`, organizados por camada:
+295 testes em `tests/`, organizados por camada:
 
 | Arquivo | O que cobre |
 |---|---|
@@ -204,7 +204,7 @@ para tornar essa troca localizada.
 | `test_compare.py` | comparativos, matriz, acumulado, destaques |
 | `test_importer.py` | CSV/XLSX, heurísticas, duplicatas, lotes, desfaazer |
 | `test_charts_export.py` | SVG, CSV, XLSX e round-trip do modelo |
-| `test_api.py` | todos os endpoints e páginas, com `TestClient` |
+| `test_api.py` | todos os endpoints e páginas, PATCH parcial, com `TestClient` |
 
 Cada teste usa banco em `tmp_path` (fixture `db_path`), então nada toca os seus dados.
 

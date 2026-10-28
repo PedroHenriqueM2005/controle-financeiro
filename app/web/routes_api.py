@@ -55,6 +55,33 @@ class ItemIn(BaseModel):
     note: str | None = None
 
 
+class ItemPatch(BaseModel):
+    """Atualização parcial de item: mande só o campo que quer mudar.
+
+    Modelo separado de ``ItemIn`` porque, com ``name`` obrigatório, um PATCH
+    que quisesse trocar apenas a unidade ou a categoria caía em 422.
+    """
+
+    name: str | None = None
+    category_id: int | None = None
+    unit: str | None = None
+    note: str | None = None
+
+
+class CategoryPatch(BaseModel):
+    """Atualização parcial de categoria: mande só o campo que quer mudar.
+
+    É o caso de uso mais comum — ajustar o limite mensal sem reenviar nome,
+    tipo e cor. ``budget: null`` remove o limite.
+    """
+
+    name: str | None = None
+    kind: str | None = Field(None, description="'entrada' ou 'saida'")
+    color: str | None = None
+    budget: int | None = Field(None, description="Limite mensal em centavos; null remove")
+    archived: bool | None = None
+
+
 class CycleIn(BaseModel):
     expected_income: int | None = Field(None, description="Salário previsto do mês, em centavos")
     payday_day: int | None = None
@@ -365,13 +392,19 @@ def create_category(payload: CategoryIn, conn: sqlite3.Connection = Depends(get_
 
 @router.patch("/categories/{category_id}")
 def update_category(
-    category_id: int, payload: CategoryIn = Body(...), conn: sqlite3.Connection = Depends(get_db)
+    category_id: int, payload: CategoryPatch = Body(...), conn: sqlite3.Connection = Depends(get_db)
 ) -> dict[str, Any]:
     dados = _dump(payload, exclude_unset=True)
-    ledger.update_category(conn, category_id, dados)
-    row = conn.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
-    if not row:
+    if not dados:
+        raise HTTPException(422, "Nenhum campo para atualizar.")
+    existe = conn.execute("SELECT 1 FROM categories WHERE id = ?", (category_id,)).fetchone()
+    if not existe:
         raise HTTPException(404, "Categoria não encontrada.")
+    try:
+        ledger.update_category(conn, category_id, dados)
+    except ledger.ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    row = conn.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
     return dict(row)
 
 
@@ -421,7 +454,7 @@ def create_item(payload: ItemIn, conn: sqlite3.Connection = Depends(get_db)) -> 
 
 
 @router.patch("/items/{item_id}")
-def update_item(item_id: int, payload: ItemIn = Body(...), conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+def update_item(item_id: int, payload: ItemPatch = Body(...), conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
     dados = _dump(payload, exclude_unset=True)
     if "name" in dados and (dados["name"] or "").strip():
         catalog.rename_item(conn, item_id, dados["name"])
